@@ -1,0 +1,38 @@
+{
+  "name": "lostman",
+  "productName": "Lostman",
+  "version": "1.0.0",
+  "description": "A free, offline API client for Windows. No login, no cloud — just requests.",
+  "author": "Lostman",
+  "license": "MIT",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.lostman.app",
+    "productName": "Lostman",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "deleteAppDataOnUninstall": false
+    }
+  },
+  "devDependencies": {
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.3"
+  }
+}

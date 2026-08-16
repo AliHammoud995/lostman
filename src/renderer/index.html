@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; connect-src 'none'; frame-src data: about:">
+  <title>Lostman</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header id="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" fill="none" stroke="#ff6c37" stroke-width="2"/>
+        <polygon points="12,5 14.2,12 12,19 9.8,12" fill="#ff6c37"/>
+        <circle cx="12" cy="12" r="1.6" fill="#17171a"/>
+      </svg>
+      <span class="brand-name">Lostman</span>
+    </div>
+    <div class="env-area">
+      <select id="envSelect" title="Active environment"></select>
+      <button id="btnManageEnv" class="ghost" title="Manage environments">Environments</button>
+    </div>
+  </header>
+
+  <div id="main">
+    <aside id="sidebar">
+      <div class="side-tabs">
+        <button data-sideview="collections" class="active">Collections</button>
+        <button data-sideview="history">History</button>
+      </div>
+      <div id="sideActions"></div>
+      <div id="sideList"></div>
+    </aside>
+
+    <div id="content">
+      <div id="tabsBar">
+        <div id="tabsList"></div>
+        <button id="btnNewTab" title="New request tab (Ctrl+T)">+</button>
+      </div>
+
+      <div id="editor">
+        <div class="request-line">
+          <select id="method" class="m-GET">
+            <option>GET</option>
+            <option>POST</option>
+            <option>PUT</option>
+            <option>PATCH</option>
+            <option>DELETE</option>
+            <option>HEAD</option>
+            <option>OPTIONS</option>
+          </select>
+          <input id="url" type="text" spellcheck="false" autocomplete="off"
+                 placeholder="Enter request URL — e.g. https://api.example.com/users?page=2   ({{variables}} supported)">
+          <button id="btnSend" class="primary" title="Send request (Ctrl+Enter)">Send</button>
+          <button id="btnSave" title="Save to collection (Ctrl+S)">Save</button>
+          <button id="btnCurl" class="ghost" title="Copy as cURL command">cURL</button>
+        </div>
+
+        <div class="editor-tabs">
+          <button data-panel="params" class="active">Params<span id="cntParams" class="cnt"></span></button>
+          <button data-panel="headers">Headers<span id="cntHeaders" class="cnt"></span></button>
+          <button data-panel="body">Body<span id="dotBody" class="dot hidden"></span></button>
+          <button data-panel="auth">Auth<span id="dotAuth" class="dot hidden"></span></button>
+        </div>
+
+        <div id="panels">
+          <div id="panel-params" class="panel active">
+            <div class="panel-hint">Query parameters are appended to the URL when the request is sent.</div>
+            <div id="kvParams" class="kv"></div>
+          </div>
+
+          <div id="panel-headers" class="panel">
+            <div class="panel-hint">Headers sent with the request. Content-Type is added automatically for raw JSON bodies unless you set one.</div>
+            <div id="kvHeaders" class="kv"></div>
+          </div>
+
+          <div id="panel-body" class="panel">
+            <div class="body-modes">
+              <label><input type="radio" name="bodyMode" value="none"> none</label>
+              <label><input type="radio" name="bodyMode" value="formdata"> form-data</label>
+              <label><input type="radio" name="bodyMode" value="urlencoded"> x-www-form-urlencoded</label>
+              <label><input type="radio" name="bodyMode" value="raw"> raw</label>
+              <select id="rawType" class="hidden">
+                <option value="json">JSON</option>
+                <option value="text">Text</option>
+              </select>
+              <button id="btnBeautify" class="ghost hidden" title="Format JSON">Beautify</button>
+            </div>
+            <div id="bodyNone" class="body-area body-none">This request has no body</div>
+            <textarea id="rawBody" class="body-area hidden" spellcheck="false"
+                      placeholder='{&#10;  "key": "value"&#10;}'></textarea>
+            <div id="kvForm" class="kv body-area hidden"></div>
+          </div>
+
+          <div id="panel-auth" class="panel">
+            <div class="auth-row">
+              <label for="authType">Type</label>
+              <select id="authType">
+                <option value="none">No Auth</option>
+                <option value="bearer">Bearer Token</option>
+                <option value="basic">Basic Auth</option>
+                <option value="apikey">API Key</option>
+              </select>
+            </div>
+            <div id="auth-bearer" class="auth-group hidden">
+              <label for="authToken">Token</label>
+              <input id="authToken" type="text" spellcheck="false" placeholder="Token ({{variables}} supported)">
+            </div>
+            <div id="auth-basic" class="auth-group hidden">
+              <label for="authUser">Username</label>
+              <input id="authUser" type="text" spellcheck="false">
+              <label for="authPass">Password</label>
+              <input id="authPass" type="password">
+            </div>
+            <div id="auth-apikey" class="auth-group hidden">
+              <label for="authKeyName">Key</label>
+              <input id="authKeyName" type="text" spellcheck="false" placeholder="e.g. X-Api-Key">
+              <label for="authKeyValue">Value</label>
+              <input id="authKeyValue" type="text" spellcheck="false">
+              <label for="authAddTo">Add to</label>
+              <select id="authAddTo">
+                <option value="header">Header</option>
+                <option value="query">Query Params</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="splitter" title="Drag to resize"></div>
+
+      <div id="responsePane">
+        <div id="respToolbar" class="hidden">
+          <div class="resp-tabs">
+            <button data-rtab="body" class="active">Body</button>
+            <button data-rtab="headers">Headers<span id="respHdrCount" class="cnt"></span></button>
+          </div>
+          <div class="resp-views" id="respViews">
+            <button data-rview="pretty" class="active">Pretty</button>
+            <button data-rview="raw">Raw</button>
+            <button data-rview="preview" id="btnPreview" class="hidden">Preview</button>
+          </div>
+          <div class="resp-meta">
+            <span id="respStatus" class="pill"></span>
+            <span id="respTime" class="meta"></span>
+            <span id="respSize" class="meta"></span>
+            <button id="btnCopyResp" class="ghost" title="Copy response body">Copy</button>
+          </div>
+        </div>
+        <div id="respContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toastRoot"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
