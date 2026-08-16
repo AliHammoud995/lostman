@@ -91,8 +91,16 @@ function parseQuery(qs) {
 
 const METHOD_SHORT = { DELETE: 'DEL', OPTIONS: 'OPT' };
 const shortMethod = (m) => METHOD_SHORT[m] || m;
+const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
 
-const DEFAULT_SETTINGS = { theme: 'dark', timeoutMs: 0, followRedirects: true, verifySsl: true };
+const DEFAULT_SETTINGS = {
+  theme: 'dark',
+  timeoutMs: 0,
+  followRedirects: true,
+  verifySsl: true,
+  codeLang: 'curl',
+  cookiesEnabled: true,
+};
 
 function blankRequest() {
   return {
@@ -104,7 +112,35 @@ function blankRequest() {
     rawType: 'json',
     rawBody: '',
     formItems: [],
-    auth: { type: 'none', token: '', username: '', password: '', keyName: '', keyValue: '', addTo: 'header' },
+    gqlQuery: '',
+    gqlVariables: '',
+    preScript: '',
+    testScript: '',
+    auth: {
+      type: 'none',
+      token: '',
+      username: '',
+      password: '',
+      keyName: '',
+      keyValue: '',
+      addTo: 'header',
+      grant: 'client_credentials',
+      authUrl: '',
+      tokenUrl: '',
+      clientId: '',
+      clientSecret: '',
+      scope: '',
+      redirectUri: 'http://localhost/lostman-callback',
+      clientAuth: 'body',
+      accessToken: '',
+      tokenType: 'Bearer',
+      expiresAt: 0,
+      accessKey: '',
+      secretKey: '',
+      region: '',
+      service: '',
+      sessionToken: '',
+    },
   };
 }
 
@@ -158,12 +194,17 @@ const state = {
   history: [],
   environments: [],
   activeEnvId: null,
+  globals: [],
+  cookies: [],
   sideView: 'collections',
   sideFilter: '',
   settings: { ...DEFAULT_SETTINGS },
 };
 
 const activeTab = () => state.tabs.find((t) => t.id === state.activeTabId);
+
+// Last response per named request, for {{res.Name.body.path}} chaining. In-memory only.
+const chainStore = new Map();
 
 /* ============================== persistence ============================== */
 
@@ -176,6 +217,8 @@ function snapshot() {
     history: state.history,
     environments: state.environments,
     activeEnvId: state.activeEnvId,
+    globals: state.globals,
+    cookies: state.cookies,
     settings: state.settings,
   };
 }
@@ -184,17 +227,61 @@ const persist = debounce(() => window.lostman.saveStore(snapshot()), 400);
 
 /* ============================== environments ============================== */
 
-function envMap() {
-  const env = state.environments.find((e) => e.id === state.activeEnvId);
+function varMap(extra) {
   const m = {};
+  for (const v of state.globals) if (v.enabled !== false && v.key) m[v.key] = v.value ?? '';
+  const env = state.environments.find((e) => e.id === state.activeEnvId);
   if (env) for (const v of env.vars) if (v.enabled !== false && v.key) m[v.key] = v.value ?? '';
+  if (extra) for (const [k, v] of Object.entries(extra)) m[k] = v ?? '';
   return m;
 }
 
-function applyEnv(s) {
+const CHAIN_RE = /\{\{\s*res\.([^.{}]+?)\.(status|body|headers)((?:\.[\w[\]-]+)*)\s*\}\}/g;
+
+function resolveChain(str) {
+  return String(str).replace(CHAIN_RE, (match, name, kind, pathStr) => {
+    const rec = chainStore.get(name.trim());
+    if (!rec) return match;
+    if (kind === 'status') return String(rec.status);
+    if (kind === 'headers') {
+      const key = (pathStr || '').replace(/^\./, '').toLowerCase();
+      return rec.headers[key] ?? match;
+    }
+    if (!pathStr) return rec.text;
+    let cur = rec.json;
+    for (const seg of pathStr.replace(/^\./, '').split('.')) {
+      if (cur == null) return match;
+      cur = cur[seg.replace(/[[\]]/g, '')];
+    }
+    if (cur == null) return match;
+    return typeof cur === 'object' ? JSON.stringify(cur) : String(cur);
+  });
+}
+
+function setChain(name, res) {
+  if (!res || !res.ok) return;
+  let json = null;
+  try {
+    json = JSON.parse(res.bodyText || 'null');
+  } catch {
+    /* not JSON */
+  }
+  const rec = {
+    status: res.status,
+    headers: Object.fromEntries((res.headers || []).map(([k, v]) => [k.toLowerCase(), v])),
+    text: res.bodyText || '',
+    json,
+  };
+  if (name) chainStore.set(name, rec);
+  chainStore.set('last', rec);
+}
+
+function applyEnv(s, extra) {
   if (!s) return s ?? '';
-  const m = envMap();
-  return String(s).replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, name) => (name in m ? m[name] : match));
+  let out = resolveChain(s);
+  const m = varMap(extra);
+  out = out.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, name) => (name in m ? m[name] : match));
+  return out;
 }
 
 function renderEnvSelect() {
@@ -254,15 +341,45 @@ function openSettings() {
   cSsl.append(sslCb, el('span', null, 'Verify SSL certificates'));
   const sslNote = el('div', 'form-note', 'Turn off only for local servers with self-signed certificates.');
 
-  body.append(fTheme, fTimeout, cRedir, cSsl, sslNote);
+  const fData = el('div', 'form-field');
+  fData.append(el('label', null, 'Data'));
+  const dataRow = el('div');
+  dataRow.style.display = 'flex';
+  dataRow.style.gap = '8px';
+  const backupBtn = el('button', null, 'Export backup…');
+  backupBtn.title = 'Save all collections, history, environments, tabs and settings to a file';
+  backupBtn.addEventListener('click', async () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const ok = await window.lostman.saveTextFile({
+      defaultName: `lostman-backup-${stamp}.json`,
+      content: JSON.stringify(snapshot(), null, 2),
+    });
+    if (ok) toast('Backup exported');
+  });
+  const restoreBtn = el('button', null, 'Restore backup…');
+  restoreBtn.title = 'Replace all app data with a previously exported backup';
+  restoreBtn.addEventListener('click', async () => {
+    const f = await window.lostman.openFile();
+    if (!f) return;
+    if (f.error) {
+      toast(f.error);
+      return;
+    }
+    if (importFromJsonText(f.content)) m.close();
+  });
+  dataRow.append(backupBtn, restoreBtn);
+  fData.append(dataRow);
 
-  modal('Settings', body, [
+  body.append(fTheme, fTimeout, cRedir, cSsl, sslNote, fData);
+
+  const m = modal('Settings', body, [
     { label: 'Cancel' },
     {
       label: 'Save',
       primary: true,
       onClick: () => {
         state.settings = {
+          ...state.settings,
           theme: themeSel.value === 'light' ? 'light' : 'dark',
           timeoutMs: Math.max(0, parseInt(timeoutInput.value, 10) || 0),
           followRedirects: redirCb.checked,
@@ -280,6 +397,7 @@ function openSettings() {
 
 function renderKv(container, rowsRef, onChange, opts = {}) {
   container.classList.toggle('kv-file', !!opts.file);
+  container.classList.toggle('kv-secret', !!opts.secret);
   const rows = rowsRef();
   const last = rows[rows.length - 1];
   if (!rows.length || (last && (last.key !== '' || last.value !== '' || last.filePath))) rows.push(newKvRow());
@@ -310,7 +428,7 @@ function kvRowEl(container, rowsRef, row, onChange, opts = {}) {
 
   const mkInput = (prop, ph) => {
     const i = document.createElement('input');
-    i.type = 'text';
+    i.type = prop === 'value' && opts.secret && row.secret ? 'password' : 'text';
     i.placeholder = ph;
     i.spellcheck = false;
     i.value = row[prop];
@@ -319,6 +437,7 @@ function kvRowEl(container, rowsRef, row, onChange, opts = {}) {
       grow();
       onChange();
     });
+    if (opts.ac !== false) attachAC(i);
     return i;
   };
 
@@ -356,6 +475,18 @@ function kvRowEl(container, rowsRef, row, onChange, opts = {}) {
     cells.push(btn);
   } else {
     cells.push(mkInput('value', 'Value'));
+  }
+
+  if (opts.secret) {
+    const eye = el('button', 'kv-eye', row.secret ? '🙈' : '👁');
+    eye.title = 'Toggle secret masking';
+    eye.tabIndex = -1;
+    eye.addEventListener('click', () => {
+      row.secret = !row.secret;
+      renderKv(container, rowsRef, onChange, opts);
+      onChange();
+    });
+    cells.push(eye);
   }
 
   const del = el('button', 'kv-del', '✕');
@@ -418,6 +549,8 @@ function initEditor() {
     activeTab().request.method = e.target.value;
     e.target.className = 'm-' + e.target.value;
     renderTabsBar();
+    updateSendButton();
+    renderResponse();
     persist();
   });
 
@@ -470,6 +603,26 @@ function initEditor() {
     }
   });
 
+  $('#gqlQuery').addEventListener('input', (e) => {
+    activeTab().request.gqlQuery = e.target.value;
+    updateEditorMeta();
+    persist();
+  });
+  $('#gqlVariables').addEventListener('input', (e) => {
+    activeTab().request.gqlVariables = e.target.value;
+    persist();
+  });
+  $('#preScript').addEventListener('input', (e) => {
+    activeTab().request.preScript = e.target.value;
+    updateEditorMeta();
+    persist();
+  });
+  $('#testScript').addEventListener('input', (e) => {
+    activeTab().request.testScript = e.target.value;
+    updateEditorMeta();
+    persist();
+  });
+
   $('#authType').addEventListener('change', (e) => {
     activeTab().request.auth.type = e.target.value;
     updateAuthUI();
@@ -486,14 +639,61 @@ function initEditor() {
   bindAuth('#authPass', 'password');
   bindAuth('#authKeyName', 'keyName');
   bindAuth('#authKeyValue', 'keyValue');
+  bindAuth('#digestUser', 'username');
+  bindAuth('#digestPass', 'password');
+  bindAuth('#oauthAuthUrl', 'authUrl');
+  bindAuth('#oauthTokenUrl', 'tokenUrl');
+  bindAuth('#oauthClientId', 'clientId');
+  bindAuth('#oauthClientSecret', 'clientSecret');
+  bindAuth('#oauthScope', 'scope');
+  bindAuth('#oauthRedirect', 'redirectUri');
+  bindAuth('#awsAccessKey', 'accessKey');
+  bindAuth('#awsSecretKey', 'secretKey');
+  bindAuth('#awsRegion', 'region');
+  bindAuth('#awsService', 'service');
+  bindAuth('#awsSession', 'sessionToken');
   $('#authAddTo').addEventListener('change', (e) => {
     activeTab().request.auth.addTo = e.target.value;
     persist();
   });
+  $('#oauthGrant').addEventListener('change', (e) => {
+    activeTab().request.auth.grant = e.target.value;
+    updateAuthUI();
+    persist();
+  });
+  $('#oauthClientAuth').addEventListener('change', (e) => {
+    activeTab().request.auth.clientAuth = e.target.value;
+    persist();
+  });
+  $('#btnOauthFetch').addEventListener('click', oauthFetchToken);
+  $('#btnOauthClear').addEventListener('click', () => {
+    const a = activeTab().request.auth;
+    a.accessToken = '';
+    a.expiresAt = 0;
+    updateAuthUI();
+    persist();
+    toast('Token cleared');
+  });
+
+  for (const id of ['#url', '#authToken', '#authUser', '#authPass', '#authKeyName', '#authKeyValue', '#rawBody', '#gqlQuery', '#gqlVariables', '#oauthTokenUrl', '#oauthAuthUrl', '#oauthScope']) {
+    attachAC($(id));
+  }
 
   $('#btnSend').addEventListener('click', sendActive);
   $('#btnSave').addEventListener('click', saveActive);
-  $('#btnCurl').addEventListener('click', copyCurl);
+  $('#btnCode').addEventListener('click', openCodeModal);
+}
+
+function updateSendButton() {
+  const tab = activeTab();
+  if (!tab) return;
+  const m = tab.request.method;
+  if (m === 'WS' || m === 'SSE') {
+    const live = tab.stream && tab.stream.status !== 'closed';
+    $('#btnSend').textContent = live ? 'Disconnect' : 'Connect';
+  } else {
+    $('#btnSend').textContent = 'Send';
+  }
 }
 
 function loadEditor() {
@@ -516,19 +716,44 @@ function loadEditor() {
   if (radio) radio.checked = true;
   $('#rawType').value = r.rawType;
   $('#rawBody').value = r.rawBody;
+  $('#gqlQuery').value = r.gqlQuery;
+  $('#gqlVariables').value = r.gqlVariables;
+  $('#preScript').value = r.preScript;
+  $('#testScript').value = r.testScript;
   updateBodyUI();
 
   $('#authType').value = r.auth.type;
-  $('#authToken').value = r.auth.token;
-  $('#authUser').value = r.auth.username;
-  $('#authPass').value = r.auth.password;
-  $('#authKeyName').value = r.auth.keyName;
-  $('#authKeyValue').value = r.auth.keyValue;
-  $('#authAddTo').value = r.auth.addTo;
+  syncAuthInputs();
   updateAuthUI();
 
   updateEditorMeta();
+  updateSendButton();
   renderResponse();
+}
+
+function syncAuthInputs() {
+  const a = activeTab().request.auth;
+  $('#authToken').value = a.token;
+  $('#authUser').value = a.username;
+  $('#authPass').value = a.password;
+  $('#authKeyName').value = a.keyName;
+  $('#authKeyValue').value = a.keyValue;
+  $('#authAddTo').value = a.addTo;
+  $('#digestUser').value = a.username;
+  $('#digestPass').value = a.password;
+  $('#oauthGrant').value = a.grant || 'client_credentials';
+  $('#oauthAuthUrl').value = a.authUrl;
+  $('#oauthTokenUrl').value = a.tokenUrl;
+  $('#oauthClientId').value = a.clientId;
+  $('#oauthClientSecret').value = a.clientSecret;
+  $('#oauthScope').value = a.scope;
+  $('#oauthRedirect').value = a.redirectUri;
+  $('#oauthClientAuth').value = a.clientAuth || 'body';
+  $('#awsAccessKey').value = a.accessKey;
+  $('#awsSecretKey').value = a.secretKey;
+  $('#awsRegion').value = a.region;
+  $('#awsService').value = a.service;
+  $('#awsSession').value = a.sessionToken;
 }
 
 function updateBodyUI() {
@@ -538,13 +763,30 @@ function updateBodyUI() {
   $('#rawType').classList.toggle('hidden', mode !== 'raw');
   $('#btnBeautify').classList.toggle('hidden', mode !== 'raw');
   $('#kvForm').classList.toggle('hidden', mode !== 'formdata' && mode !== 'urlencoded');
+  $('#gqlArea').classList.toggle('hidden', mode !== 'graphql');
 }
 
 function updateAuthUI() {
-  const type = activeTab().request.auth.type;
+  const a = activeTab().request.auth;
+  const type = a.type;
+  syncAuthInputs();
   $('#auth-bearer').classList.toggle('hidden', type !== 'bearer');
   $('#auth-basic').classList.toggle('hidden', type !== 'basic');
   $('#auth-apikey').classList.toggle('hidden', type !== 'apikey');
+  $('#auth-oauth2').classList.toggle('hidden', type !== 'oauth2');
+  $('#auth-digest').classList.toggle('hidden', type !== 'digest');
+  $('#auth-awsv4').classList.toggle('hidden', type !== 'awsv4');
+  if (type === 'oauth2') {
+    const acOnly = a.grant === 'auth_code';
+    $$('.oauth-ac-only').forEach((n) => n.classList.toggle('hidden', !acOnly));
+    const st = $('#oauthStatus');
+    if (a.accessToken) {
+      const left = a.expiresAt ? Math.round((a.expiresAt - Date.now()) / 60000) : null;
+      st.textContent = `Token: ${a.accessToken.slice(0, 24)}… ${left != null ? (left > 0 ? `(expires in ${left} min)` : '(expired)') : ''}`;
+    } else {
+      st.textContent = 'No token fetched yet.';
+    }
+  }
 }
 
 function updateEditorMeta() {
@@ -555,68 +797,111 @@ function updateEditorMeta() {
   $('#cntParams').textContent = np ? ` (${np})` : '';
   $('#cntHeaders').textContent = nh ? ` (${nh})` : '';
   const hasBody =
-    r.bodyMode === 'raw' ? r.rawBody.trim() !== '' : r.bodyMode === 'none' ? false : count(r.formItems) > 0;
+    r.bodyMode === 'raw'
+      ? r.rawBody.trim() !== ''
+      : r.bodyMode === 'graphql'
+        ? r.gqlQuery.trim() !== ''
+        : r.bodyMode === 'none'
+          ? false
+          : count(r.formItems) > 0;
   $('#dotBody').classList.toggle('hidden', !hasBody);
   $('#dotAuth').classList.toggle('hidden', r.auth.type === 'none');
+  $('#dotScripts').classList.toggle('hidden', r.preScript.trim() === '' && r.testScript.trim() === '');
 }
 
 /* ============================== sending ============================== */
 
 function buildPayload(tab) {
-  const r = tab.request;
+  return buildPayloadFromRequest(tab.request, null);
+}
+
+function buildPayloadFromRequest(r, extra) {
+  const env = (s) => applyEnv(s, extra);
   const [rawBase] = splitUrl(r.url.trim());
-  let url = applyEnv(rawBase.trim());
+  let url = env(rawBase.trim());
   if (!url) return null;
-  if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+  if (!/^(https?|wss?):\/\//i.test(url)) url = 'http://' + url;
 
   const qp = r.params.filter((p) => p.enabled !== false && p.key.trim() !== '');
   if (qp.length) {
-    url += '?' + qp.map((p) => encodeURIComponent(applyEnv(p.key)) + '=' + encodeURIComponent(applyEnv(p.value))).join('&');
+    url += '?' + qp.map((p) => encodeURIComponent(env(p.key)) + '=' + encodeURIComponent(env(p.value))).join('&');
   }
 
   const headers = r.headers
     .filter((h) => h.enabled !== false && h.key.trim() !== '')
-    .map((h) => ({ key: applyEnv(h.key), value: applyEnv(h.value) }));
+    .map((h) => ({ key: env(h.key), value: env(h.value) }));
   const hasHeader = (name) => headers.some((h) => h.key.toLowerCase() === name);
 
+  let auth = null;
   const a = r.auth;
   if (a.type === 'bearer' && a.token) {
-    headers.push({ key: 'Authorization', value: 'Bearer ' + applyEnv(a.token) });
+    headers.push({ key: 'Authorization', value: 'Bearer ' + env(a.token) });
   } else if (a.type === 'basic') {
     let cred;
     try {
-      cred = btoa(applyEnv(a.username) + ':' + applyEnv(a.password));
+      cred = btoa(env(a.username) + ':' + env(a.password));
     } catch {
-      cred = btoa(unescape(encodeURIComponent(applyEnv(a.username) + ':' + applyEnv(a.password))));
+      cred = btoa(unescape(encodeURIComponent(env(a.username) + ':' + env(a.password))));
     }
     headers.push({ key: 'Authorization', value: 'Basic ' + cred });
   } else if (a.type === 'apikey' && a.keyName) {
     if (a.addTo === 'query') {
-      url += (url.includes('?') ? '&' : '?') + encodeURIComponent(applyEnv(a.keyName)) + '=' + encodeURIComponent(applyEnv(a.keyValue));
+      url += (url.includes('?') ? '&' : '?') + encodeURIComponent(env(a.keyName)) + '=' + encodeURIComponent(env(a.keyValue));
     } else {
-      headers.push({ key: applyEnv(a.keyName), value: applyEnv(a.keyValue) });
+      headers.push({ key: env(a.keyName), value: env(a.keyValue) });
     }
+  } else if (a.type === 'oauth2' && a.accessToken) {
+    headers.push({ key: 'Authorization', value: `${a.tokenType || 'Bearer'} ${a.accessToken}` });
+  } else if (a.type === 'digest') {
+    auth = { type: 'digest', username: env(a.username), password: env(a.password) };
+  } else if (a.type === 'awsv4' && a.accessKey) {
+    auth = {
+      type: 'awsv4',
+      accessKey: env(a.accessKey),
+      secretKey: env(a.secretKey),
+      region: env(a.region) || 'us-east-1',
+      service: env(a.service) || 'execute-api',
+      sessionToken: env(a.sessionToken),
+    };
   }
 
   let bodyMode = r.bodyMode;
-  if (r.method === 'GET' || r.method === 'HEAD') bodyMode = 'none';
+  if (r.method === 'GET' || r.method === 'HEAD' || r.method === 'WS' || r.method === 'SSE') bodyMode = 'none';
   let rawBody = null;
   let formItems = null;
   if (bodyMode === 'raw') {
-    rawBody = applyEnv(r.rawBody);
+    rawBody = env(r.rawBody);
     if (!hasHeader('content-type')) {
       headers.push({ key: 'Content-Type', value: r.rawType === 'json' ? 'application/json' : 'text/plain' });
     }
+  } else if (bodyMode === 'graphql') {
+    let vars = null;
+    const varsText = env(r.gqlVariables).trim();
+    if (varsText) {
+      try {
+        vars = JSON.parse(varsText);
+      } catch {
+        vars = null;
+      }
+    }
+    rawBody = JSON.stringify({ query: env(r.gqlQuery), variables: vars || {} });
+    bodyMode = 'raw';
+    if (!hasHeader('content-type')) headers.push({ key: 'Content-Type', value: 'application/json' });
   } else if (bodyMode === 'urlencoded' || bodyMode === 'formdata') {
     formItems = r.formItems
       .filter((f) => f.enabled !== false && f.key.trim() !== '')
       .map((f) => ({
-        key: applyEnv(f.key),
-        value: applyEnv(f.value),
+        key: env(f.key),
+        value: env(f.value),
         type: f.type === 'file' ? 'file' : 'text',
         filePath: f.filePath || '',
       }));
     if (bodyMode === 'urlencoded') formItems = formItems.filter((f) => f.type !== 'file');
+  }
+
+  if (state.settings.cookiesEnabled && !hasHeader('cookie')) {
+    const cookieHeader = cookiesFor(url);
+    if (cookieHeader) headers.push({ key: 'Cookie', value: cookieHeader });
   }
 
   return {
@@ -626,6 +911,7 @@ function buildPayload(tab) {
     bodyMode,
     rawBody,
     formItems,
+    auth,
     settings: {
       timeoutMs: state.settings.timeoutMs,
       followRedirects: state.settings.followRedirects,
@@ -637,12 +923,26 @@ function buildPayload(tab) {
 async function sendActive() {
   const tab = activeTab();
   if (!tab || tab.sending) return;
+  const r = tab.request;
+  if (r.method === 'WS' || r.method === 'SSE') {
+    toggleStream(tab);
+    return;
+  }
   const payload = buildPayload(tab);
   if (!payload) {
     toast('Enter a request URL first');
     return;
   }
   payload.id = uid();
+
+  if (r.preScript.trim()) {
+    const pre = runPreScript(r.preScript, payload, null);
+    if (!pre.ok) {
+      toast('Pre-request script error: ' + pre.error);
+      return;
+    }
+  }
+
   tab.sending = payload.id;
   tab.respTab = 'body';
   if (tab === activeTab()) renderResponse();
@@ -652,6 +952,15 @@ async function sendActive() {
   if (tab.sending !== payload.id) return;
   tab.sending = null;
   tab.response = res;
+  if (res.ok) {
+    storeCookiesFromResponse(res, payload.url);
+    setChain(tab.name, res);
+    if (r.testScript.trim()) {
+      res.testResults = runTests(r.testScript, res, null);
+      const failed = res.testResults.some((t) => !t.ok);
+      if (failed) tab.respTab = 'tests';
+    }
+  }
   if (res.ok && res.bodyBase64) tab.respView = 'preview';
   if (!res.aborted) addHistory(tab.request, res);
   if (tab === activeTab()) renderResponse();
@@ -661,28 +970,22 @@ function cancelSend(tab) {
   if (tab.sending) window.lostman.abort(tab.sending);
 }
 
-function copyCurl() {
-  const payload = buildPayload(activeTab());
-  if (!payload) {
-    toast('Enter a request URL first');
-    return;
-  }
+function genCurl(p) {
   const sq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
   const parts = ['curl'];
-  if (payload.method !== 'GET') parts.push('-X', payload.method);
-  parts.push(sq(payload.url));
-  for (const h of payload.headers) parts.push('-H', sq(h.key + ': ' + h.value));
-  if (payload.bodyMode === 'raw' && payload.rawBody) parts.push('--data-raw', sq(payload.rawBody));
-  if (payload.bodyMode === 'urlencoded') {
-    for (const f of payload.formItems) parts.push('--data-urlencode', sq(f.key + '=' + f.value));
+  if (p.method !== 'GET') parts.push('-X', p.method);
+  parts.push(sq(p.url));
+  for (const h of p.headers) parts.push('-H', sq(h.key + ': ' + h.value));
+  if (p.bodyMode === 'raw' && p.rawBody) parts.push('--data-raw', sq(p.rawBody));
+  if (p.bodyMode === 'urlencoded') {
+    for (const f of p.formItems) parts.push('--data-urlencode', sq(f.key + '=' + f.value));
   }
-  if (payload.bodyMode === 'formdata') {
-    for (const f of payload.formItems) {
+  if (p.bodyMode === 'formdata') {
+    for (const f of p.formItems) {
       parts.push('-F', sq(f.type === 'file' ? `${f.key}=@${f.filePath}` : `${f.key}=${f.value}`));
     }
   }
-  navigator.clipboard.writeText(parts.join(' '));
-  toast('cURL command copied to clipboard');
+  return parts.join(' ');
 }
 
 /* ============================== response rendering ============================== */
@@ -707,6 +1010,13 @@ function renderResponse() {
   const box = $('#respContent');
   const toolbar = $('#respToolbar');
   const searchBar = $('#respSearchBar');
+
+  if (tab.request.method === 'WS' || tab.request.method === 'SSE') {
+    toolbar.classList.add('hidden');
+    searchBar.classList.add('hidden');
+    renderStreamConsole(box, tab);
+    return;
+  }
 
   if (tab.sending) {
     toolbar.classList.add('hidden');
@@ -753,6 +1063,14 @@ function renderResponse() {
   const canPreview = !!r.bodyBase64 || /text\/html/i.test(r.contentType || '');
   $('#btnPreview').classList.toggle('hidden', !canPreview);
   if (tab.respView === 'preview' && !canPreview) tab.respView = 'pretty';
+  const canDiff = !!tab.pinned && !r.bodyBase64;
+  $('#btnDiff').classList.toggle('hidden', !canDiff);
+  if (tab.respView === 'diff' && !canDiff) tab.respView = 'pretty';
+
+  const tr = r.testResults;
+  $('#respTestsBtn').classList.toggle('hidden', !tr);
+  if (tr) $('#respTestCount').textContent = ` (${tr.filter((t) => t.ok).length}/${tr.length})`;
+  if (tab.respTab === 'tests' && !tr) tab.respTab = 'body';
 
   $$('.resp-tabs button').forEach((b) => b.classList.toggle('active', b.dataset.rtab === tab.respTab));
   $$('.resp-views button').forEach((b) => b.classList.toggle('active', b.dataset.rview === tab.respView));
@@ -767,9 +1085,23 @@ function renderResponse() {
   }
 
   box.innerHTML = '';
+  if (r.fromHistory) box.append(el('div', 'diff-meta', `Snapshot from history — ${timeAgo(r.fromHistory)}`));
   if (tab.respTab === 'headers') renderRespHeaders(box, r);
+  else if (tab.respTab === 'tests') renderTestResults(box, r);
   else if (searchOn && tab.search.q !== '') renderSearchView(box, r, tab.search);
+  else if (tab.respView === 'diff') renderDiffView(box, tab, r);
   else renderRespBody(box, r, tab.respView);
+}
+
+function renderTestResults(box, r) {
+  const wrap = el('div', 'test-list');
+  for (const t of r.testResults || []) {
+    const row = el('div', 'test-row ' + (t.ok ? 'pass' : 'fail'));
+    row.append(el('span', 't-mark', t.ok ? '✓' : '✗'), el('span', null, t.name));
+    if (!t.ok && t.error) row.append(el('span', 't-err', '— ' + t.error));
+    wrap.append(row);
+  }
+  box.append(wrap);
 }
 
 function renderRespHeaders(box, r) {
@@ -983,19 +1315,141 @@ function initRespActions() {
     });
     if (ok) toast('Response saved to file');
   });
+  $('#btnPinResp').addEventListener('click', () => {
+    const tab = activeTab();
+    const r = tab.response;
+    if (!r || !r.ok || r.bodyBase64) {
+      toast('Only text responses can be pinned');
+      return;
+    }
+    tab.pinned = { text: prettyText(r.bodyText ?? ''), label: `${r.status} · ${formatTime(r.timeMs)}`, ts: Date.now() };
+    toast('Response pinned — send again and use Diff to compare');
+    renderResponse();
+  });
+}
+
+function prettyText(text) {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+}
+
+function lcsDiff(a, b) {
+  const n = a.length;
+  const m = b.length;
+  const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const ops = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      ops.push([' ', a[i]]);
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      ops.push(['-', a[i]]);
+      i++;
+    } else {
+      ops.push(['+', b[j]]);
+      j++;
+    }
+  }
+  while (i < n) ops.push(['-', a[i++]]);
+  while (j < m) ops.push(['+', b[j++]]);
+  return ops;
+}
+
+function diffLines(aText, bText) {
+  const a = aText.split('\n');
+  const b = bText.split('\n');
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+    endA--;
+    endB--;
+  }
+  const midA = a.slice(start, endA);
+  const midB = b.slice(start, endB);
+  let ops;
+  if (midA.length * midB.length > 2_250_000) {
+    ops = [...midA.map((l) => ['-', l]), ...midB.map((l) => ['+', l])];
+  } else {
+    ops = lcsDiff(midA, midB);
+  }
+  return { prefix: a.slice(0, start), ops, suffix: a.slice(endA) };
+}
+
+function renderDiffView(box, tab, r) {
+  const current = prettyText(r.bodyText ?? '');
+  const pinnedText = tab.pinned.text;
+  if (current.length > 400_000 || pinnedText.length > 400_000) {
+    box.append(el('div', 'resp-error', 'Responses are too large to diff.'));
+    return;
+  }
+  box.append(el('div', 'diff-meta', `Comparing pinned (${tab.pinned.label}, ${timeAgo(tab.pinned.ts)}) with the current response — red was removed, green was added`));
+  const { prefix, ops, suffix } = diffLines(pinnedText, current);
+  const changed = ops.filter(([op]) => op !== ' ').length;
+  if (!changed) {
+    box.append(el('div', 'diff-meta', 'No differences.'));
+  }
+  const pre = el('pre', 'code');
+  const parts = [];
+  const ctx = (lines, tail) => {
+    if (lines.length <= 4) return lines.map(esc).join('\n');
+    return tail
+      ? '…\n' + lines.slice(-3).map(esc).join('\n')
+      : lines.slice(0, 3).map(esc).join('\n') + '\n…';
+  };
+  if (prefix.length) parts.push(ctx(prefix, true));
+  for (const [op, line] of ops.slice(0, 5000)) {
+    if (op === ' ') parts.push(esc(line));
+    else if (op === '-') parts.push(`<span class="d-del">- ${esc(line)}</span>`);
+    else parts.push(`<span class="d-add">+ ${esc(line)}</span>`);
+  }
+  if (ops.length > 5000) parts.push('… (diff truncated)');
+  if (suffix.length) parts.push(ctx(suffix, false));
+  pre.innerHTML = parts.join('\n');
+  box.append(pre);
 }
 
 /* ============================== history ============================== */
 
+const SNAPSHOT_MAX = 64 * 1024;
+
 function addHistory(request, res) {
+  let snapshot = null;
+  if (res.ok) {
+    const text = res.bodyBase64 ? '' : res.bodyText ?? '';
+    snapshot = {
+      status: res.status,
+      statusText: res.statusText,
+      timeMs: res.timeMs,
+      size: res.size,
+      contentType: res.contentType,
+      headers: res.headers,
+      bodyText: res.bodyBase64 ? `[binary ${res.contentType} response — resend to view]` : text.slice(0, SNAPSHOT_MAX),
+      truncated: !!res.truncated || text.length > SNAPSHOT_MAX,
+    };
+  }
   state.history.unshift({
     id: uid(),
     ts: Date.now(),
     request: cleanRequest(request),
     status: res.ok ? res.status : null,
     error: !res.ok,
+    snapshot,
   });
   if (state.history.length > 100) state.history.length = 100;
+  for (let i = 25; i < state.history.length; i++) if (state.history[i].snapshot) state.history[i].snapshot = null;
   persist();
   if (state.sideView === 'history') renderSidebar();
 }
@@ -1092,7 +1546,10 @@ function renderSidebar() {
         renderSidebar();
       })
     );
-    actions.append(add);
+    const imp = el('button', null, 'Import');
+    imp.title = 'Import Postman collection / environment, OpenAPI spec, cURL, or Lostman backup';
+    imp.addEventListener('click', openImportModal);
+    actions.append(add, imp);
 
     if (!state.collections.length) {
       list.append(
@@ -1199,7 +1656,26 @@ function collectionEl(col, q) {
     renderSidebar();
   });
 
-  acts.append(addFolder, rename, del);
+  const exp = el('button', null, '⇩');
+  exp.title = 'Export as Postman v2.1 collection';
+  exp.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const safeName = col.name.replace(/[\\/:*?"<>|]/g, '-');
+    const ok = await window.lostman.saveTextFile({
+      defaultName: `${safeName}.postman_collection.json`,
+      content: JSON.stringify(exportPostman(col), null, 2),
+    });
+    if (ok) toast(`Exported "${col.name}"`);
+  });
+
+  const run = el('button', null, '▶');
+  run.title = 'Run collection';
+  run.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openRunnerModal(col);
+  });
+
+  acts.append(run, addFolder, exp, rename, del);
   header.append(chev, name, count, acts);
   header.addEventListener('click', () => {
     col.open = !col.open;
@@ -1399,6 +1875,17 @@ function historyEl(h) {
   row.append(chip, main, acts);
   row.addEventListener('click', () => {
     const tab = makeTab(structuredClone(h.request));
+    if (h.snapshot) {
+      tab.response = {
+        ok: true,
+        fromHistory: h.ts,
+        bufId: null,
+        redirects: 0,
+        finalUrl: '',
+        bodyBase64: null,
+        ...structuredClone(h.snapshot),
+      };
+    }
     state.tabs.push(tab);
     switchTab(tab.id);
   });
@@ -1630,6 +2117,7 @@ function closeTab(id) {
   if (idx === -1) return;
   const tab = state.tabs[idx];
   cancelSend(tab);
+  if (tab.stream && tab.stream.status !== 'closed') window.lostman.streamClose({ id: tab.stream.id });
   state.tabs.splice(idx, 1);
   if (!state.tabs.length) state.tabs.push(makeTab());
   if (state.activeTabId === id) {
@@ -1754,8 +2242,22 @@ function ctxMenu(x, y, items) {
 
 /* ============================== environment manager ============================== */
 
+function parseDotEnv(text) {
+  const out = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const m = t.match(/^(?:export\s+)?([\w.-]+)\s*=\s*(.*)$/);
+    if (!m) continue;
+    let v = m[2];
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    out.push({ key: m[1], value: v });
+  }
+  return out;
+}
+
 function openEnvManager() {
-  let selId = state.activeEnvId || state.environments[0]?.id || null;
+  let selId = state.activeEnvId || '__globals';
 
   const layout = el('div', 'env-layout');
   const left = el('div', 'env-list');
@@ -1776,6 +2278,14 @@ function openEnvManager() {
       refresh();
     });
     left.append(add);
+
+    const gItem = el('div', 'env-list-item' + (selId === '__globals' ? ' sel' : ''), '⚙ Globals');
+    gItem.addEventListener('click', () => {
+      selId = '__globals';
+      refresh();
+    });
+    left.append(gItem);
+
     for (const env of state.environments) {
       const item = el('div', 'env-list-item' + (env.id === selId ? ' sel' : ''), env.name);
       item.addEventListener('click', () => {
@@ -1786,8 +2296,9 @@ function openEnvManager() {
     }
 
     right.innerHTML = '';
-    const env = state.environments.find((e) => e.id === selId);
-    if (!env) {
+    const isGlobals = selId === '__globals';
+    const env = isGlobals ? null : state.environments.find((e) => e.id === selId);
+    if (!isGlobals && !env) {
       right.append(
         Object.assign(el('div', 'env-empty'), {
           innerHTML: 'No environment selected.<br>Create one to define <b>{{variables}}</b><br>usable in URLs, headers, bodies and auth.',
@@ -1796,55 +2307,86 @@ function openEnvManager() {
       return;
     }
 
-    const f = el('div', 'form-field');
-    f.append(el('label', null, 'Environment name'));
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.value = env.name;
-    nameInput.addEventListener('input', () => {
-      env.name = nameInput.value;
-      persist();
-      renderEnvSelect();
-      [...left.querySelectorAll('.env-list-item')].forEach((n, i) => {
-        if (state.environments[i]?.id === env.id) n.textContent = env.name;
+    if (isGlobals) {
+      right.append(el('div', 'panel-hint', 'Global variables are always available; the active environment overrides them.'));
+    } else {
+      const f = el('div', 'form-field');
+      f.append(el('label', null, 'Environment name'));
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.value = env.name;
+      nameInput.addEventListener('input', () => {
+        env.name = nameInput.value;
+        persist();
+        renderEnvSelect();
       });
-    });
-    f.append(nameInput);
-    right.append(f);
+      f.append(nameInput);
+      right.append(f);
+    }
 
-    right.append(el('div', 'panel-hint', 'Variables — use them anywhere as {{name}}'));
+    right.append(el('div', 'panel-hint', 'Variables — use them anywhere as {{name}}. The 👁 toggle masks secrets on screen.'));
     const kvBox = el('div', 'kv');
     right.append(kvBox);
-    renderKv(kvBox, () => env.vars, () => {
-      persist();
-    });
+    const rowsRef = isGlobals ? () => state.globals : () => env.vars;
+    renderKv(kvBox, rowsRef, () => persist(), { ac: false, secret: true });
 
     const controls = el('div');
     controls.style.marginTop = '14px';
     controls.style.display = 'flex';
     controls.style.gap = '8px';
 
-    const activate = el('button', state.activeEnvId === env.id ? null : 'primary',
-      state.activeEnvId === env.id ? 'Active ✓' : 'Set Active');
-    activate.addEventListener('click', () => {
-      state.activeEnvId = state.activeEnvId === env.id ? null : env.id;
-      persist();
-      renderEnvSelect();
-      refresh();
-    });
+    if (!isGlobals) {
+      const activate = el('button', state.activeEnvId === env.id ? null : 'primary',
+        state.activeEnvId === env.id ? 'Active ✓' : 'Set Active');
+      activate.addEventListener('click', () => {
+        state.activeEnvId = state.activeEnvId === env.id ? null : env.id;
+        persist();
+        renderEnvSelect();
+        refresh();
+      });
+      controls.append(activate);
+    }
 
-    const del = el('button', null, 'Delete');
-    del.addEventListener('click', () => {
-      if (!confirm(`Delete environment "${env.name}"?`)) return;
-      state.environments = state.environments.filter((e) => e !== env);
-      if (state.activeEnvId === env.id) state.activeEnvId = null;
-      selId = state.environments[0]?.id || null;
+    const imp = el('button', null, 'Import .env…');
+    imp.title = 'Merge KEY=VALUE pairs from a .env file into these variables';
+    imp.addEventListener('click', async () => {
+      const f = await window.lostman.openFile({ filters: [{ name: 'Env files', extensions: ['env', '*'] }] });
+      if (!f) return;
+      if (f.error) {
+        toast(f.error);
+        return;
+      }
+      const pairs = parseDotEnv(f.content);
+      if (!pairs.length) {
+        toast('No KEY=VALUE pairs found in that file');
+        return;
+      }
+      const rows = rowsRef();
+      for (const p of pairs) {
+        const existing = rows.find((v) => v.key === p.key);
+        if (existing) existing.value = p.value;
+        else rows.push({ ...newKvRow(), key: p.key, value: p.value });
+      }
       persist();
-      renderEnvSelect();
       refresh();
+      toast(`Imported ${pairs.length} variable(s) from ${f.name}`);
     });
+    controls.append(imp);
 
-    controls.append(activate, del);
+    if (!isGlobals) {
+      const del = el('button', null, 'Delete');
+      del.addEventListener('click', () => {
+        if (!confirm(`Delete environment "${env.name}"?`)) return;
+        state.environments = state.environments.filter((e) => e !== env);
+        if (state.activeEnvId === env.id) state.activeEnvId = null;
+        selId = '__globals';
+        persist();
+        renderEnvSelect();
+        refresh();
+      });
+      controls.append(del);
+    }
+
     right.append(controls);
   }
 
@@ -1921,9 +2463,1692 @@ function initShortcuts() {
   });
 }
 
+/* ============================== cookies ============================== */
+
+function parseSetCookie(str, requestUrl) {
+  const [nv, ...attrs] = String(str).split(';');
+  const eq = nv.indexOf('=');
+  if (eq < 0) return null;
+  const c = {
+    name: nv.slice(0, eq).trim(),
+    value: nv.slice(eq + 1).trim(),
+    domain: null,
+    hostOnly: false,
+    path: '/',
+    expires: null,
+    secure: false,
+    httpOnly: false,
+  };
+  for (const attr of attrs) {
+    const ai = attr.indexOf('=');
+    const k = (ai === -1 ? attr : attr.slice(0, ai)).trim().toLowerCase();
+    const v = ai === -1 ? '' : attr.slice(ai + 1).trim();
+    if (k === 'domain' && v) c.domain = v.replace(/^\./, '').toLowerCase();
+    else if (k === 'path' && v) c.path = v;
+    else if (k === 'expires' && v) {
+      const t = Date.parse(v);
+      if (!Number.isNaN(t)) c.expires = t;
+    } else if (k === 'max-age' && v) {
+      const n = parseInt(v, 10);
+      if (!Number.isNaN(n)) c.expires = Date.now() + n * 1000;
+    } else if (k === 'secure') c.secure = true;
+    else if (k === 'httponly') c.httpOnly = true;
+  }
+  let host;
+  try {
+    host = new URL(requestUrl).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (!c.domain) {
+    c.domain = host;
+    c.hostOnly = true;
+  } else if (host !== c.domain && !host.endsWith('.' + c.domain)) {
+    return null;
+  }
+  return c;
+}
+
+function storeCookiesFromResponse(res, url) {
+  if (!state.settings.cookiesEnabled) return;
+  const setCookies = (res.headers || []).filter(([k]) => k.toLowerCase() === 'set-cookie').map(([, v]) => v);
+  if (!setCookies.length) return;
+  for (const sc of setCookies) {
+    const c = parseSetCookie(sc, url);
+    if (!c) continue;
+    const idx = state.cookies.findIndex((x) => x.name === c.name && x.domain === c.domain && x.path === c.path);
+    if (c.expires !== null && c.expires <= Date.now()) {
+      if (idx > -1) state.cookies.splice(idx, 1);
+    } else if (idx > -1) {
+      state.cookies[idx] = c;
+    } else {
+      state.cookies.push(c);
+    }
+  }
+  persist();
+}
+
+function cookiesFor(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return '';
+  }
+  const host = u.hostname.toLowerCase();
+  const isSecure = u.protocol === 'https:' || u.protocol === 'wss:';
+  const reqPath = u.pathname || '/';
+  return state.cookies
+    .filter(
+      (c) =>
+        (c.expires == null || c.expires > Date.now()) &&
+        (c.hostOnly ? host === c.domain : host === c.domain || host.endsWith('.' + c.domain)) &&
+        (reqPath === c.path || reqPath.startsWith(c.path.endsWith('/') ? c.path : c.path + '/') || c.path === '/') &&
+        (!c.secure || isSecure)
+    )
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+}
+
+function openCookieModal() {
+  const body = el('div');
+  body.style.minWidth = '520px';
+
+  const toggle = el('label', 'form-check');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = state.settings.cookiesEnabled !== false;
+  cb.addEventListener('change', () => {
+    state.settings.cookiesEnabled = cb.checked;
+    persist();
+  });
+  toggle.append(cb, el('span', null, 'Automatically capture Set-Cookie responses and send matching cookies'));
+  body.append(toggle);
+
+  const listBox = el('div');
+  body.append(listBox);
+
+  function refresh() {
+    state.cookies = state.cookies.filter((c) => c.expires == null || c.expires > Date.now());
+    listBox.innerHTML = '';
+    if (!state.cookies.length) {
+      listBox.append(el('div', 'env-empty', 'No cookies stored yet — responses with Set-Cookie headers will appear here.'));
+      return;
+    }
+    const domains = [...new Set(state.cookies.map((c) => c.domain))].sort();
+    for (const d of domains) {
+      const head = el('div', 'cookie-domain');
+      head.append(el('span', null, d));
+      const clearBtn = el('button', 'ghost', '✕ clear');
+      clearBtn.addEventListener('click', () => {
+        state.cookies = state.cookies.filter((c) => c.domain !== d);
+        persist();
+        refresh();
+      });
+      head.append(clearBtn);
+      listBox.append(head);
+      for (const c of state.cookies.filter((x) => x.domain === d)) {
+        const row = el('div', 'cookie-row');
+        row.append(el('span', 'ck-name', c.name), el('span', 'ck-val', '= ' + c.value));
+        const meta = [];
+        if (c.path !== '/') meta.push(c.path);
+        if (c.secure) meta.push('secure');
+        meta.push(c.expires ? 'expires ' + new Date(c.expires).toLocaleString() : 'session');
+        row.append(el('span', 'ck-meta', meta.join(' · ')));
+        const del = el('button', 'kv-del', '✕');
+        del.addEventListener('click', () => {
+          state.cookies = state.cookies.filter((x) => x !== c);
+          persist();
+          refresh();
+        });
+        row.append(del);
+        listBox.append(row);
+      }
+    }
+  }
+  refresh();
+
+  modal('Cookies', body, [
+    {
+      label: 'Clear All',
+      onClick: () => {
+        if (!confirm('Delete all stored cookies?')) return false;
+        state.cookies = [];
+        persist();
+        refresh();
+        return false;
+      },
+    },
+    { label: 'Close', primary: true },
+  ]);
+}
+
+/* ============================== scripts sandbox ============================== */
+
+function makeExpect() {
+  return function expect(actual) {
+    const fail = (msg) => {
+      throw new Error(msg);
+    };
+    const str = (v) => {
+      try {
+        return JSON.stringify(v);
+      } catch {
+        return String(v);
+      }
+    };
+    return {
+      toBe: (e) => {
+        if (actual !== e) fail(`expected ${str(actual)} to be ${str(e)}`);
+      },
+      toEqual: (e) => {
+        if (JSON.stringify(actual) !== JSON.stringify(e)) fail(`expected ${str(actual)} to equal ${str(e)}`);
+      },
+      toContain: (e) => {
+        const ok = typeof actual === 'string' ? actual.includes(e) : Array.isArray(actual) && actual.includes(e);
+        if (!ok) fail(`expected ${str(actual)} to contain ${str(e)}`);
+      },
+      toBeGreaterThan: (e) => {
+        if (!(actual > e)) fail(`expected ${str(actual)} to be greater than ${str(e)}`);
+      },
+      toBeLessThan: (e) => {
+        if (!(actual < e)) fail(`expected ${str(actual)} to be less than ${str(e)}`);
+      },
+      toBeDefined: () => {
+        if (actual === undefined) fail('expected value to be defined');
+      },
+      toBeTruthy: () => {
+        if (!actual) fail(`expected ${str(actual)} to be truthy`);
+      },
+      toHaveProperty: (p) => {
+        let cur = actual;
+        for (const seg of String(p).split('.')) {
+          if (cur == null || !(seg in Object(cur))) fail(`expected object to have property "${p}"`);
+          cur = cur[seg];
+        }
+      },
+      toMatch: (re) => {
+        const rx = re instanceof RegExp ? re : new RegExp(re);
+        if (!rx.test(String(actual))) fail(`expected ${str(actual)} to match ${rx}`);
+      },
+    };
+  };
+}
+
+function scriptVarApi(extra) {
+  const setIn = (rows, k, v) => {
+    const f = rows.find((r) => r.key === k);
+    if (f) f.value = String(v);
+    else rows.push({ ...newKvRow(), key: k, value: String(v) });
+    persist();
+  };
+  const activeEnv = () => state.environments.find((e) => e.id === state.activeEnvId);
+  return {
+    variables: { get: (k) => varMap(extra)[k] },
+    environment: {
+      get: (k) => varMap(extra)[k],
+      set: (k, v) => {
+        const env = activeEnv();
+        setIn(env ? env.vars : state.globals, k, v);
+      },
+    },
+    globals: {
+      get: (k) => varMap(extra)[k],
+      set: (k, v) => setIn(state.globals, k, v),
+    },
+  };
+}
+
+function runScript(code, args) {
+  try {
+    const fn = new Function(...Object.keys(args), '"use strict";\n' + code);
+    fn(...Object.values(args));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+}
+
+function runPreScript(code, payload, extra) {
+  const findHeader = (k) => payload.headers.find((h) => h.key.toLowerCase() === String(k).toLowerCase());
+  const pm = {
+    ...scriptVarApi(extra),
+    request: {
+      get url() {
+        return payload.url;
+      },
+      set url(v) {
+        payload.url = String(v);
+      },
+      get method() {
+        return payload.method;
+      },
+      set method(v) {
+        payload.method = String(v).toUpperCase();
+      },
+      get body() {
+        return payload.rawBody;
+      },
+      set body(v) {
+        payload.rawBody = String(v);
+        if (payload.bodyMode === 'none') payload.bodyMode = 'raw';
+      },
+      headers: {
+        add: (h) => payload.headers.push({ key: h.key, value: h.value }),
+        set: (k, v) => {
+          const f = findHeader(k);
+          if (f) f.value = String(v);
+          else payload.headers.push({ key: k, value: String(v) });
+        },
+        get: (k) => findHeader(k)?.value ?? null,
+        remove: (k) => {
+          const i = payload.headers.findIndex((h) => h.key.toLowerCase() === String(k).toLowerCase());
+          if (i > -1) payload.headers.splice(i, 1);
+        },
+      },
+    },
+  };
+  return runScript(code, { pm, expect: makeExpect(), console: { log: () => {} } });
+}
+
+function runTests(code, res, extra) {
+  const results = [];
+  const pm = {
+    ...scriptVarApi(extra),
+    response: {
+      code: res.status,
+      status: res.statusText,
+      responseTime: res.timeMs,
+      size: res.size,
+      text: () => res.bodyText || '',
+      json: () => JSON.parse(res.bodyText || 'null'),
+      headers: {
+        get: (k) => {
+          const f = (res.headers || []).find(([hk]) => hk.toLowerCase() === String(k).toLowerCase());
+          return f ? f[1] : null;
+        },
+      },
+    },
+    test: (name, fn) => {
+      try {
+        fn();
+        results.push({ name: String(name), ok: true });
+      } catch (err) {
+        results.push({ name: String(name), ok: false, error: String((err && err.message) || err) });
+      }
+    },
+  };
+  const r = runScript(code, { pm, expect: makeExpect(), console: { log: () => {} } });
+  if (!r.ok) results.push({ name: '(script error)', ok: false, error: r.error });
+  return results;
+}
+
+/* ============================== OAuth 2.0 token fetching ============================== */
+
+function b64url(bytes) {
+  return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function randomString(len) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(len));
+  return [...bytes].map((b) => chars[b % chars.length]).join('');
+}
+
+async function oauthFetchToken() {
+  const tab = activeTab();
+  const a = tab.request.auth;
+  const tokenUrl = applyEnv(a.tokenUrl).trim();
+  if (!tokenUrl) {
+    toast('Enter a Token URL first');
+    return;
+  }
+  const form = [];
+  const headers = [];
+
+  if (a.grant === 'auth_code') {
+    const authUrl = applyEnv(a.authUrl).trim();
+    if (!authUrl) {
+      toast('Enter an Auth URL first');
+      return;
+    }
+    const verifier = randomString(64);
+    const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+    const stateParam = randomString(16);
+    const q = new URLSearchParams({
+      response_type: 'code',
+      client_id: applyEnv(a.clientId),
+      redirect_uri: applyEnv(a.redirectUri),
+      state: stateParam,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    });
+    if (a.scope) q.set('scope', applyEnv(a.scope));
+    const result = await window.lostman.oauthAuthorize({
+      authUrl: authUrl + (authUrl.includes('?') ? '&' : '?') + q.toString(),
+      redirectUri: applyEnv(a.redirectUri),
+    });
+    if (!result || result.error || !result.code) {
+      toast('Authorization failed: ' + (result?.error || 'no code returned'));
+      return;
+    }
+    form.push(
+      { key: 'grant_type', value: 'authorization_code' },
+      { key: 'code', value: result.code },
+      { key: 'redirect_uri', value: applyEnv(a.redirectUri) },
+      { key: 'client_id', value: applyEnv(a.clientId) },
+      { key: 'code_verifier', value: verifier }
+    );
+    if (a.clientSecret) form.push({ key: 'client_secret', value: applyEnv(a.clientSecret) });
+  } else {
+    form.push({ key: 'grant_type', value: 'client_credentials' });
+    if (a.scope) form.push({ key: 'scope', value: applyEnv(a.scope) });
+    if (a.clientAuth === 'basic') {
+      headers.push({ key: 'Authorization', value: 'Basic ' + btoa(applyEnv(a.clientId) + ':' + applyEnv(a.clientSecret)) });
+    } else {
+      form.push({ key: 'client_id', value: applyEnv(a.clientId) }, { key: 'client_secret', value: applyEnv(a.clientSecret) });
+    }
+  }
+
+  toast('Requesting token…');
+  const res = await window.lostman.send({
+    id: uid(),
+    method: 'POST',
+    url: tokenUrl,
+    headers: [...headers, { key: 'Accept', value: 'application/json' }],
+    bodyMode: 'urlencoded',
+    rawBody: null,
+    formItems: form.map((f) => ({ ...f, type: 'text', filePath: '' })),
+    settings: { timeoutMs: 30000, followRedirects: true, verifySsl: state.settings.verifySsl },
+  });
+
+  if (!res.ok) {
+    toast('Token request failed: ' + (res.error || 'network error'));
+    return;
+  }
+  let data = null;
+  try {
+    data = JSON.parse(res.bodyText || '');
+  } catch {
+    /* not JSON */
+  }
+  if (res.status >= 400 || !data || !data.access_token) {
+    toast(`Token endpoint returned ${res.status}: ${(data && (data.error_description || data.error)) || 'no access_token in response'}`);
+    return;
+  }
+  a.accessToken = data.access_token;
+  a.tokenType = data.token_type || 'Bearer';
+  a.expiresAt = data.expires_in ? Date.now() + data.expires_in * 1000 : 0;
+  persist();
+  updateAuthUI();
+  toast('Access token stored — it will be sent as an Authorization header');
+}
+
+/* ============================== {{variable}} autocomplete ============================== */
+
+let acInput = null;
+let acStart = 0;
+let acIndex = 0;
+let acItems = [];
+
+function hideAC() {
+  $('#acRoot').innerHTML = '';
+  acInput = null;
+  acItems = [];
+}
+
+function acCandidates(prefix) {
+  const vars = Object.keys(varMap(null));
+  const chains = [...chainStore.keys()].map((n) => `res.${n}.body`);
+  const all = [...vars, ...chains];
+  const p = prefix.toLowerCase();
+  return all.filter((n) => n.toLowerCase().startsWith(p) && n !== prefix).slice(0, 8);
+}
+
+function showAC(input) {
+  const pos = input.selectionStart ?? input.value.length;
+  const before = input.value.slice(0, pos);
+  const m = before.match(/\{\{\s*([\w.-]*)$/);
+  if (!m) {
+    hideAC();
+    return;
+  }
+  const items = acCandidates(m[1]);
+  if (!items.length) {
+    hideAC();
+    return;
+  }
+  acInput = input;
+  acStart = pos - m[1].length;
+  acItems = items;
+  acIndex = 0;
+  const root = $('#acRoot');
+  root.innerHTML = '';
+  const menu = el('div', 'ac-menu');
+  const vm = varMap(null);
+  items.forEach((name, i) => {
+    const item = el('div', 'ac-item' + (i === acIndex ? ' sel' : ''));
+    item.textContent = name;
+    if (name in vm && vm[name]) {
+      const v = el('span', 'ac-val', String(vm[name]).slice(0, 24));
+      item.append(v);
+    }
+    item.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      acPick(name);
+    });
+    menu.append(item);
+  });
+  root.append(menu);
+  const rect = input.getBoundingClientRect();
+  menu.style.left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 10) + 'px';
+  menu.style.top = Math.min(rect.bottom + 3, window.innerHeight - menu.offsetHeight - 10) + 'px';
+}
+
+function acPick(name) {
+  if (!acInput) return;
+  const input = acInput;
+  const pos = input.selectionStart ?? input.value.length;
+  const after = input.value.slice(pos);
+  const closing = after.startsWith('}}') ? '' : '}}';
+  input.value = input.value.slice(0, acStart) + name + closing + after;
+  const cursor = acStart + name.length + closing.length;
+  input.setSelectionRange(cursor, cursor);
+  hideAC();
+  input.dispatchEvent(new Event('input', { bubbles: false }));
+  input.focus();
+}
+
+function attachAC(input) {
+  if (!input) return;
+  input.addEventListener('input', () => showAC(input));
+  input.addEventListener('blur', () => setTimeout(hideAC, 120));
+  input.addEventListener('keydown', (e) => {
+    if (!acItems.length || acInput !== input) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      acIndex = (acIndex + (e.key === 'ArrowDown' ? 1 : acItems.length - 1)) % acItems.length;
+      $$('.ac-item').forEach((n, i) => n.classList.toggle('sel', i === acIndex));
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      acPick(acItems[acIndex]);
+    } else if (e.key === 'Escape') {
+      hideAC();
+    }
+  });
+}
+
+/* ============================== WebSocket / SSE console ============================== */
+
+function toggleStream(tab) {
+  if (tab.stream && tab.stream.status !== 'closed') {
+    window.lostman.streamClose({ id: tab.stream.id });
+    tab.stream.status = 'closed';
+    tab.stream.messages.push({ dir: 'sys', text: 'Disconnected', ts: Date.now() });
+    updateSendButton();
+    renderResponse();
+    return;
+  }
+  const payload = buildPayloadFromRequest(tab.request, null);
+  if (!payload) {
+    toast('Enter a URL first');
+    return;
+  }
+  const kind = tab.request.method === 'WS' ? 'ws' : 'sse';
+  let url = payload.url;
+  if (kind === 'ws') url = url.replace(/^http/i, 'ws');
+  else url = url.replace(/^ws(s?):\/\//i, 'http$1://');
+  const id = uid();
+  tab.stream = { id, kind, status: 'connecting', messages: [{ dir: 'sys', text: `Connecting to ${url}…`, ts: Date.now() }], input: '' };
+  updateSendButton();
+  renderResponse();
+  window.lostman.streamOpen({ id, kind, url, headers: payload.headers });
+}
+
+function handleStreamEvent(ev) {
+  const tab = state.tabs.find((t) => t.stream && t.stream.id === ev.id);
+  if (!tab) return;
+  const st = tab.stream;
+  if (ev.type === 'open') {
+    st.status = 'open';
+    st.messages.push({ dir: 'sys', text: 'Connected' + (ev.data ? ' — ' + ev.data : ''), ts: ev.ts });
+  } else if (ev.type === 'message') {
+    st.messages.push({ dir: 'in', text: ev.data, ts: ev.ts });
+  } else if (ev.type === 'error') {
+    st.messages.push({ dir: 'sys', text: 'Error: ' + ev.data, ts: ev.ts });
+  } else if (ev.type === 'close') {
+    st.status = 'closed';
+    st.messages.push({ dir: 'sys', text: 'Closed' + (ev.data ? ' — ' + ev.data : ''), ts: ev.ts });
+  }
+  if (st.messages.length > 500) st.messages.splice(0, st.messages.length - 500);
+  if (tab === activeTab()) {
+    renderResponse();
+    updateSendButton();
+  }
+}
+
+function renderStreamConsole(box, tab) {
+  box.innerHTML = '';
+  const st = tab.stream;
+  const wrap = el('div', 'stream-console');
+
+  const status = el('div', 'stream-status');
+  const pill = el('span', 'pill s-' + (st ? st.status : 'closed'), st ? st.status : 'not connected');
+  status.append(pill);
+  status.append(el('span', null, tab.request.method === 'WS' ? 'WebSocket' : 'Server-Sent Events'));
+  if (st && st.messages.length) {
+    const clear = el('button', 'ghost', 'Clear');
+    clear.addEventListener('click', () => {
+      st.messages = [];
+      renderResponse();
+    });
+    status.append(clear);
+  }
+  wrap.append(status);
+
+  const log = el('div', 'stream-log');
+  if (!st || !st.messages.length) {
+    log.append(
+      Object.assign(el('div', 'resp-empty'), {
+        innerHTML: `<div>Enter a ${tab.request.method === 'WS' ? 'ws:// or wss://' : 'URL'} and click <b>Connect</b></div>`,
+      })
+    );
+  } else {
+    for (const msg of st.messages) {
+      const row = el('div', 'stream-msg ' + msg.dir);
+      row.append(el('span', 'sm-time', new Date(msg.ts).toLocaleTimeString()));
+      row.append(el('span', 'sm-dir', msg.dir === 'in' ? '▼' : msg.dir === 'out' ? '▲' : '•'));
+      row.append(el('span', 'sm-text', msg.text));
+      log.append(row);
+    }
+  }
+  wrap.append(log);
+
+  if (tab.request.method === 'WS') {
+    const inputRow = el('div', 'stream-input');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = st && st.status === 'open' ? 'Message to send…' : 'Connect first to send messages';
+    input.disabled = !st || st.status !== 'open';
+    input.value = (st && st.input) || '';
+    input.addEventListener('input', () => {
+      if (st) st.input = input.value;
+    });
+    const sendMsg = () => {
+      if (!st || st.status !== 'open' || !input.value) return;
+      window.lostman.streamSend({ id: st.id, message: input.value });
+      st.messages.push({ dir: 'out', text: input.value, ts: Date.now() });
+      st.input = '';
+      renderResponse();
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendMsg();
+    });
+    const btn = el('button', 'primary', 'Send');
+    btn.disabled = !st || st.status !== 'open';
+    btn.addEventListener('click', sendMsg);
+    inputRow.append(input, btn);
+    wrap.append(inputRow);
+  }
+
+  box.append(wrap);
+  log.scrollTop = log.scrollHeight;
+}
+
+/* ============================== collection runner ============================== */
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQ = false;
+  const s = String(text);
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inQ) {
+      if (c === '"') {
+        if (s[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else inQ = false;
+      } else cell += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (c === '\n' || c === '\r') {
+      if (c === '\r' && s[i + 1] === '\n') i++;
+      row.push(cell);
+      cell = '';
+      if (row.some((x) => x !== '')) rows.push(row);
+      row = [];
+    } else cell += c;
+  }
+  row.push(cell);
+  if (row.some((x) => x !== '')) rows.push(row);
+  if (rows.length < 2) return [];
+  const headers = rows[0].map((h) => h.trim());
+  return rows.slice(1).map((r) => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? ''])));
+}
+
+function openRunnerModal(col) {
+  const seq = [];
+  for (const f of col.folders || []) for (const s of f.requests) seq.push(s);
+  for (const s of col.requests) seq.push(s);
+  if (!seq.length) {
+    toast('This collection has no requests to run');
+    return;
+  }
+
+  const body = el('div');
+  body.style.minWidth = '540px';
+  body.append(el('div', 'panel-hint', `${seq.length} request(s) will run in order. Optionally iterate over a CSV or JSON-array data file — each row's columns become {{variables}}.`));
+
+  let dataRows = null;
+  const fileRow = el('div');
+  fileRow.style.display = 'flex';
+  fileRow.style.gap = '8px';
+  fileRow.style.alignItems = 'center';
+  fileRow.style.marginBottom = '10px';
+  const fileBtn = el('button', null, 'Choose data file…');
+  const fileLabel = el('span', 'panel-hint', 'no data file (single run)');
+  fileLabel.style.margin = '0';
+  fileBtn.addEventListener('click', async () => {
+    const f = await window.lostman.openFile({ filters: [{ name: 'Data', extensions: ['csv', 'json'] }, { name: 'All Files', extensions: ['*'] }] });
+    if (!f) return;
+    if (f.error) {
+      toast(f.error);
+      return;
+    }
+    try {
+      if (f.content.trim().startsWith('[')) {
+        const arr = JSON.parse(f.content);
+        dataRows = arr.filter((x) => x && typeof x === 'object');
+      } else {
+        dataRows = parseCSV(f.content);
+      }
+    } catch {
+      dataRows = null;
+    }
+    if (!dataRows || !dataRows.length) {
+      fileLabel.textContent = 'could not parse that file (expected CSV with a header row, or a JSON array of objects)';
+      dataRows = null;
+    } else {
+      fileLabel.textContent = `${f.name} — ${dataRows.length} iteration(s)`;
+    }
+  });
+  fileRow.append(fileBtn, fileLabel);
+  body.append(fileRow);
+
+  const delayRow = el('div', 'form-field');
+  delayRow.append(el('label', null, 'Delay between requests (ms)'));
+  const delayInput = document.createElement('input');
+  delayInput.type = 'number';
+  delayInput.min = '0';
+  delayInput.value = '0';
+  delayRow.append(delayInput);
+  body.append(delayRow);
+
+  const runBtn = el('button', 'primary', 'Run');
+  body.append(runBtn);
+
+  const results = el('div', 'run-results');
+  const summary = el('div', 'run-summary');
+  body.append(results, summary);
+
+  const ui = { stopped: false };
+
+  runBtn.addEventListener('click', async () => {
+    if (runBtn.textContent === 'Stop') {
+      ui.stopped = true;
+      runBtn.textContent = 'Run';
+      return;
+    }
+    ui.stopped = false;
+    runBtn.textContent = 'Stop';
+    results.innerHTML = '';
+    summary.textContent = '';
+    const rows = dataRows && dataRows.length ? dataRows : [null];
+    let okCount = 0;
+    let failCount = 0;
+    let testPass = 0;
+    let testFail = 0;
+    const started = Date.now();
+
+    for (let it = 0; it < rows.length; it++) {
+      for (const saved of seq) {
+        if (ui.stopped || !results.isConnected) break;
+        const label = rows.length > 1 ? `[${it + 1}] ${saved.name}` : saved.name;
+        const r = saved.request;
+        const payload = buildPayloadFromRequest(r, rows[it]);
+        const rowEl = el('div', 'run-row');
+        rowEl.append(el('span', 'method-chip m-' + r.method, shortMethod(r.method)), el('span', 'rr-name', label));
+        results.append(rowEl);
+        results.scrollTop = results.scrollHeight;
+
+        if (!payload || r.method === 'WS' || r.method === 'SSE') {
+          rowEl.append(el('span', 'rr-status', 'skipped'));
+          continue;
+        }
+        payload.id = uid();
+        if (r.preScript && r.preScript.trim()) {
+          const pre = runPreScript(r.preScript, payload, rows[it]);
+          if (!pre.ok) {
+            rowEl.append(Object.assign(el('span', 'rr-status', 'pre-script error'), { style: 'color: var(--err)' }));
+            failCount++;
+            continue;
+          }
+        }
+        const res = await window.lostman.send(payload);
+        if (res.ok) {
+          okCount++;
+          storeCookiesFromResponse(res, payload.url);
+          setChain(saved.name, res);
+          const st = el('span', 'rr-status', String(res.status));
+          st.style.color = res.status < 400 ? 'var(--ok)' : 'var(--err)';
+          rowEl.append(st, el('span', 'ck-meta', formatTime(res.timeMs)));
+          if (r.testScript && r.testScript.trim()) {
+            const tr = runTests(r.testScript, res, rows[it]);
+            const passed = tr.filter((t) => t.ok).length;
+            testPass += passed;
+            testFail += tr.length - passed;
+            const tl = el('span', 'ck-meta', `tests ${passed}/${tr.length}`);
+            if (passed < tr.length) tl.style.color = 'var(--err)';
+            rowEl.append(tl);
+          }
+        } else {
+          failCount++;
+          rowEl.append(Object.assign(el('span', 'rr-status', res.aborted ? 'cancelled' : 'failed'), { style: 'color: var(--err)' }));
+          rowEl.append(el('span', 'ck-meta', res.error || ''));
+        }
+        const delay = Math.max(0, parseInt(delayInput.value, 10) || 0);
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+      if (ui.stopped || !results.isConnected) break;
+    }
+
+    runBtn.textContent = 'Run';
+    const bits = [`${okCount} sent`, `${failCount} failed`];
+    if (testPass + testFail) bits.push(`tests: ${testPass} passed, ${testFail} failed`);
+    bits.push(`in ${formatTime(Date.now() - started)}`);
+    summary.textContent = (ui.stopped ? 'Stopped — ' : 'Done — ') + bits.join(' · ');
+    renderSidebar();
+  });
+
+  modal(`Run "${col.name}"`, body, [{ label: 'Close' }]);
+}
+
+/* ============================== import: detection ============================== */
+
+function importFromJsonText(text) {
+  let obj;
+  try {
+    obj = JSON.parse(text);
+  } catch {
+    toast('Not valid JSON (YAML specs must be converted to JSON first)');
+    return false;
+  }
+  if (obj && obj.info && Array.isArray(obj.item)) {
+    const { col, env, count } = importPostman(obj);
+    state.collections.push(col);
+    if (env) {
+      state.environments.push(env);
+      renderEnvSelect();
+    }
+    persist();
+    renderSidebar();
+    toast(`Imported "${col.name}" — ${count} request(s)${env ? ' + variables environment' : ''}`);
+    return true;
+  }
+  if (obj && (obj.openapi || obj.swagger)) {
+    const { col, count } = importOpenApi(obj);
+    state.collections.push(col);
+    persist();
+    renderSidebar();
+    toast(`Imported "${col.name}" — ${count} request(s) from the spec`);
+    return true;
+  }
+  if (obj && Array.isArray(obj.values) && obj._postman_variable_scope) {
+    const env = {
+      id: uid(),
+      name: obj.name || 'Imported environment',
+      vars: obj.values.filter((v) => v.key).map((v) => ({ ...newKvRow(), key: v.key, value: v.value ?? '', enabled: v.enabled !== false })),
+    };
+    state.environments.push(env);
+    persist();
+    renderEnvSelect();
+    toast(`Imported environment "${env.name}" (${env.vars.length} variables)`);
+    return true;
+  }
+  if (obj && Array.isArray(obj.collections) && Array.isArray(obj.tabs)) {
+    if (!confirm('Restore this Lostman backup? It will REPLACE all current collections, history, environments, tabs and settings.')) return false;
+    restoreBackup(obj);
+    toast('Backup restored');
+    return true;
+  }
+  toast('Unrecognized format — expected a Postman collection/environment, OpenAPI JSON spec, or Lostman backup');
+  return false;
+}
+
+function openImportModal() {
+  const body = el('div');
+  body.append(
+    el('div', 'panel-hint', 'Import a Postman collection (v2.x) or environment, an OpenAPI 3 / Swagger 2 spec (JSON), or a Lostman backup.')
+  );
+  const fileBtn = el('button', 'primary', 'Choose file…');
+  fileBtn.style.marginBottom = '14px';
+  body.append(fileBtn);
+
+  body.append(el('div', 'panel-hint', 'Or paste a cURL command to open it as a new request tab:'));
+  const ta = document.createElement('textarea');
+  ta.rows = 5;
+  ta.spellcheck = false;
+  ta.style.width = '100%';
+  ta.style.fontFamily = 'var(--mono)';
+  ta.style.fontSize = '12px';
+  ta.placeholder = 'curl https://api.example.com/users -H "Authorization: Bearer {{token}}"';
+  body.append(ta);
+  const curlBtn = el('button', null, 'Import cURL');
+  curlBtn.style.marginTop = '8px';
+  body.append(curlBtn);
+
+  const m = modal('Import', body, [{ label: 'Close' }]);
+
+  fileBtn.addEventListener('click', async () => {
+    const f = await window.lostman.openFile();
+    if (!f) return;
+    if (f.error) {
+      toast(f.error);
+      return;
+    }
+    if (importFromJsonText(f.content)) m.close();
+  });
+
+  curlBtn.addEventListener('click', () => {
+    try {
+      const req = parseCurl(ta.value);
+      const tab = makeTab(req);
+      state.tabs.push(tab);
+      m.close();
+      switchTab(tab.id);
+      toast('cURL imported into a new tab');
+    } catch (err) {
+      toast(err.message || 'Could not parse the cURL command');
+    }
+  });
+}
+
+/* ============================== import/export: Postman ============================== */
+
+const pmKV = (list) =>
+  (list || []).filter((h) => h && h.key).map((h) => ({ ...newKvRow(), key: h.key, value: h.value ?? '', enabled: h.disabled !== true }));
+
+function pmAuthGet(auth, type, key) {
+  const section = auth ? auth[type] : null;
+  if (Array.isArray(section)) {
+    const f = section.find((x) => x.key === key);
+    return f ? f.value ?? '' : '';
+  }
+  if (section && typeof section === 'object') return section[key] ?? '';
+  return '';
+}
+
+function convertPostmanRequest(pr) {
+  const r = blankRequest();
+  if (typeof pr === 'string') {
+    r.url = pr;
+    return r;
+  }
+  const method = (pr.method || 'GET').toUpperCase();
+  r.method = METHODS.includes(method) ? method : 'GET';
+
+  const u = pr.url;
+  if (typeof u === 'string') r.url = u;
+  else if (u) {
+    r.url = u.raw || '';
+    if (!r.url && Array.isArray(u.host)) {
+      r.url = (u.protocol ? u.protocol + '://' : '') + u.host.join('.') + (u.port ? ':' + u.port : '') + '/' + (Array.isArray(u.path) ? u.path.join('/') : '');
+    }
+    if (Array.isArray(u.query) && u.query.length) {
+      const [base] = splitUrl(r.url);
+      r.params = u.query.map((qp) => ({ ...newKvRow(), key: qp.key || '', value: qp.value ?? '', enabled: qp.disabled !== true }));
+      const enabled = r.params.filter((p) => p.enabled && p.key);
+      r.url = enabled.length ? base + '?' + enabled.map((p) => prettyEncode(p.key) + '=' + prettyEncode(p.value)).join('&') : base;
+    }
+  }
+
+  r.headers = pmKV(pr.header);
+
+  const b = pr.body;
+  if (b) {
+    if (b.mode === 'raw') {
+      r.bodyMode = 'raw';
+      r.rawBody = b.raw || '';
+      const lang = b.options && b.options.raw && b.options.raw.language;
+      r.rawType = (lang ? /json/i.test(lang) : /^\s*[[{]/.test(r.rawBody)) ? 'json' : 'text';
+    } else if (b.mode === 'urlencoded') {
+      r.bodyMode = 'urlencoded';
+      r.formItems = pmKV(b.urlencoded);
+    } else if (b.mode === 'formdata') {
+      r.bodyMode = 'formdata';
+      r.formItems = (b.formdata || []).filter((f) => f && f.key).map((f) => ({
+        ...newKvRow(),
+        key: f.key,
+        value: f.value ?? '',
+        enabled: f.disabled !== true,
+        type: f.type === 'file' ? 'file' : 'text',
+        filePath: typeof f.src === 'string' ? f.src : Array.isArray(f.src) ? f.src[0] || '' : '',
+      }));
+    } else if (b.mode === 'graphql' && b.graphql) {
+      r.bodyMode = 'raw';
+      r.rawType = 'json';
+      let vars = {};
+      try {
+        vars = typeof b.graphql.variables === 'string' ? JSON.parse(b.graphql.variables) : b.graphql.variables || {};
+      } catch {
+        vars = {};
+      }
+      r.rawBody = JSON.stringify({ query: b.graphql.query || '', variables: vars }, null, 2);
+    }
+  }
+
+  const a = pr.auth;
+  if (a && a.type === 'bearer') {
+    r.auth.type = 'bearer';
+    r.auth.token = pmAuthGet(a, 'bearer', 'token');
+  } else if (a && a.type === 'basic') {
+    r.auth.type = 'basic';
+    r.auth.username = pmAuthGet(a, 'basic', 'username');
+    r.auth.password = pmAuthGet(a, 'basic', 'password');
+  } else if (a && a.type === 'apikey') {
+    r.auth.type = 'apikey';
+    r.auth.keyName = pmAuthGet(a, 'apikey', 'key');
+    r.auth.keyValue = pmAuthGet(a, 'apikey', 'value');
+    r.auth.addTo = pmAuthGet(a, 'apikey', 'in') === 'query' ? 'query' : 'header';
+  }
+  return r;
+}
+
+function importPostman(doc) {
+  const col = { id: uid(), name: (doc.info && doc.info.name) || 'Imported Collection', open: true, requests: [], folders: [] };
+  let count = 0;
+  const walk = (items, folderName) => {
+    for (const it of items || []) {
+      if (Array.isArray(it.item)) {
+        walk(it.item, folderName ? `${folderName} / ${it.name || 'Folder'}` : it.name || 'Folder');
+      } else if (it.request) {
+        const reqObj = { id: uid(), name: it.name || 'Request', request: convertPostmanRequest(it.request) };
+        if (folderName) {
+          let f = col.folders.find((x) => x.name === folderName);
+          if (!f) {
+            f = { id: uid(), name: folderName, open: false, requests: [] };
+            col.folders.push(f);
+          }
+          f.requests.push(reqObj);
+        } else {
+          col.requests.push(reqObj);
+        }
+        count++;
+      }
+    }
+  };
+  walk(doc.item, null);
+
+  let env = null;
+  const vars = (doc.variable || []).filter((v) => v && v.key);
+  if (vars.length) {
+    env = {
+      id: uid(),
+      name: `${col.name} variables`,
+      vars: vars.map((v) => ({ ...newKvRow(), key: v.key, value: v.value ?? '' })),
+    };
+  }
+  return { col, env, count };
+}
+
+function convertToPostmanRequest(r) {
+  const out = {
+    method: r.method,
+    header: r.headers.filter((h) => h.key).map((h) => ({ key: h.key, value: h.value, ...(h.enabled === false ? { disabled: true } : {}) })),
+  };
+
+  const [base] = splitUrl(r.url);
+  const enabled = r.params.filter((p) => p.enabled !== false && p.key);
+  const raw = enabled.length ? base + '?' + enabled.map((p) => prettyEncode(p.key) + '=' + prettyEncode(p.value)).join('&') : base;
+  const urlObj = { raw };
+  const m = base.match(/^(https?):\/\/([^/]+)(\/?.*)$/i);
+  if (m) {
+    urlObj.protocol = m[1].toLowerCase();
+    const hostport = m[2].split(':');
+    urlObj.host = hostport[0].split('.');
+    if (hostport[1]) urlObj.port = hostport[1];
+    const p = m[3].replace(/^\//, '');
+    urlObj.path = p ? p.split('/') : [];
+  }
+  if (r.params.some((p) => p.key)) {
+    urlObj.query = r.params.filter((p) => p.key).map((p) => ({ key: p.key, value: p.value, ...(p.enabled === false ? { disabled: true } : {}) }));
+  }
+  out.url = urlObj;
+
+  if (r.bodyMode === 'raw' && r.rawBody) {
+    out.body = { mode: 'raw', raw: r.rawBody, options: { raw: { language: r.rawType === 'json' ? 'json' : 'text' } } };
+  } else if (r.bodyMode === 'urlencoded') {
+    out.body = {
+      mode: 'urlencoded',
+      urlencoded: r.formItems.filter((f) => f.key).map((f) => ({ key: f.key, value: f.value, ...(f.enabled === false ? { disabled: true } : {}) })),
+    };
+  } else if (r.bodyMode === 'formdata') {
+    out.body = {
+      mode: 'formdata',
+      formdata: r.formItems.filter((f) => f.key).map((f) =>
+        f.type === 'file'
+          ? { key: f.key, type: 'file', src: f.filePath, ...(f.enabled === false ? { disabled: true } : {}) }
+          : { key: f.key, type: 'text', value: f.value, ...(f.enabled === false ? { disabled: true } : {}) }
+      ),
+    };
+  }
+
+  if (r.auth.type === 'bearer' && r.auth.token) {
+    out.auth = { type: 'bearer', bearer: [{ key: 'token', value: r.auth.token, type: 'string' }] };
+  } else if (r.auth.type === 'basic') {
+    out.auth = {
+      type: 'basic',
+      basic: [
+        { key: 'username', value: r.auth.username, type: 'string' },
+        { key: 'password', value: r.auth.password, type: 'string' },
+      ],
+    };
+  } else if (r.auth.type === 'apikey' && r.auth.keyName) {
+    out.auth = {
+      type: 'apikey',
+      apikey: [
+        { key: 'key', value: r.auth.keyName, type: 'string' },
+        { key: 'value', value: r.auth.keyValue, type: 'string' },
+        { key: 'in', value: r.auth.addTo === 'query' ? 'query' : 'header', type: 'string' },
+      ],
+    };
+  }
+  return out;
+}
+
+function exportPostman(col) {
+  const reqToItem = (s) => ({ name: s.name, request: convertToPostmanRequest(s.request), response: [] });
+  const item = [];
+  for (const f of col.folders || []) item.push({ name: f.name, item: f.requests.map(reqToItem) });
+  for (const s of col.requests) item.push(reqToItem(s));
+  return {
+    info: {
+      _postman_id: col.id,
+      name: col.name,
+      schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+    },
+    item,
+  };
+}
+
+/* ============================== import: OpenAPI / Swagger ============================== */
+
+function importOpenApi(doc) {
+  const col = { id: uid(), name: (doc.info && doc.info.title) || 'Imported API', open: true, requests: [], folders: [] };
+  const isV3 = !!doc.openapi;
+  let base = '';
+  if (isV3) {
+    base = (doc.servers && doc.servers[0] && doc.servers[0].url) || '';
+  } else {
+    const scheme = (doc.schemes && doc.schemes[0]) || 'https';
+    base = doc.host ? `${scheme}://${doc.host}${doc.basePath || ''}` : doc.basePath || '';
+  }
+  base = base.replace(/\/$/, '');
+
+  const resolveRef = (ref) => {
+    if (typeof ref !== 'string' || !ref.startsWith('#/')) return null;
+    let cur = doc;
+    for (const seg of ref.slice(2).split('/')) {
+      cur = cur ? cur[seg.replace(/~1/g, '/').replace(/~0/g, '~')] : null;
+    }
+    return cur;
+  };
+  const deref = (s) => {
+    const seen = new Set();
+    while (s && s.$ref && !seen.has(s.$ref)) {
+      seen.add(s.$ref);
+      s = resolveRef(s.$ref);
+    }
+    return s || {};
+  };
+
+  function example(schema, depth = 0) {
+    schema = deref(schema);
+    if (!schema || depth > 3) return null;
+    if (schema.example !== undefined) return schema.example;
+    if (schema.default !== undefined) return schema.default;
+    if (Array.isArray(schema.enum) && schema.enum.length) return schema.enum[0];
+    if (Array.isArray(schema.allOf)) {
+      const o = {};
+      for (const part of schema.allOf) {
+        const v = example(part, depth + 1);
+        if (v && typeof v === 'object' && !Array.isArray(v)) Object.assign(o, v);
+      }
+      return o;
+    }
+    if (Array.isArray(schema.oneOf) && schema.oneOf.length) return example(schema.oneOf[0], depth + 1);
+    if (Array.isArray(schema.anyOf) && schema.anyOf.length) return example(schema.anyOf[0], depth + 1);
+    const t = schema.type || (schema.properties ? 'object' : null);
+    if (t === 'object') {
+      const o = {};
+      const props = schema.properties || {};
+      let i = 0;
+      for (const k of Object.keys(props)) {
+        if (i++ >= 25) break;
+        o[k] = example(props[k], depth + 1);
+      }
+      return o;
+    }
+    if (t === 'array') return [example(schema.items, depth + 1)];
+    if (t === 'integer' || t === 'number') return 0;
+    if (t === 'boolean') return true;
+    if (t === 'string') {
+      if (schema.format === 'date-time') return '2026-01-01T00:00:00Z';
+      if (schema.format === 'date') return '2026-01-01';
+      return 'string';
+    }
+    return null;
+  }
+
+  let count = 0;
+  const OPS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'];
+  for (const [p, pathItem0] of Object.entries(doc.paths || {})) {
+    const pathItem = deref(pathItem0);
+    const commonParams = pathItem.parameters || [];
+    for (const meth of OPS) {
+      const op = pathItem[meth];
+      if (!op) continue;
+      const r = blankRequest();
+      r.method = meth.toUpperCase();
+      r.url = (base + p).replace(/\{([^{}]+)\}/g, '{{$1}}');
+
+      const params = [...commonParams, ...(op.parameters || [])].map(deref);
+      for (const prm of params) {
+        if (prm.in === 'query') r.params.push({ ...newKvRow(), key: prm.name || '', enabled: prm.required === true });
+        else if (prm.in === 'header') r.headers.push({ ...newKvRow(), key: prm.name || '', enabled: prm.required === true });
+      }
+
+      if (isV3) {
+        const content = op.requestBody ? deref(op.requestBody).content : null;
+        if (content) {
+          const key =
+            ['application/json', 'application/x-www-form-urlencoded', 'multipart/form-data'].find((k) => content[k]) ||
+            Object.keys(content)[0];
+          const media = content[key] || {};
+          if (/json/i.test(key)) {
+            r.bodyMode = 'raw';
+            r.rawType = 'json';
+            const ex =
+              media.example ??
+              (media.examples ? Object.values(media.examples)[0]?.value : undefined) ??
+              example(media.schema);
+            r.rawBody = JSON.stringify(ex ?? {}, null, 2);
+          } else {
+            const schema = deref(media.schema || {});
+            r.bodyMode = /multipart/i.test(key) ? 'formdata' : 'urlencoded';
+            for (const k of Object.keys(schema.properties || {})) {
+              const ps = deref(schema.properties[k]);
+              r.formItems.push({ ...newKvRow(), key: k, type: ps.format === 'binary' ? 'file' : 'text' });
+            }
+          }
+        }
+      } else {
+        const bodyParam = params.find((x) => x.in === 'body');
+        if (bodyParam) {
+          r.bodyMode = 'raw';
+          r.rawType = 'json';
+          r.rawBody = JSON.stringify(example(bodyParam.schema) ?? {}, null, 2);
+        }
+        const formParams = params.filter((x) => x.in === 'formData');
+        if (formParams.length) {
+          const multipart = (op.consumes || doc.consumes || []).includes('multipart/form-data');
+          r.bodyMode = multipart ? 'formdata' : 'urlencoded';
+          for (const fp of formParams) {
+            r.formItems.push({ ...newKvRow(), key: fp.name || '', type: fp.type === 'file' ? 'file' : 'text', enabled: fp.required === true });
+          }
+        }
+      }
+
+      const item = { id: uid(), name: op.summary || op.operationId || `${r.method} ${p}`, request: r };
+      const tag = (op.tags && op.tags[0]) || null;
+      if (tag) {
+        let f = col.folders.find((x) => x.name === tag);
+        if (!f) {
+          f = { id: uid(), name: tag, open: false, requests: [] };
+          col.folders.push(f);
+        }
+        f.requests.push(item);
+      } else {
+        col.requests.push(item);
+      }
+      count++;
+    }
+  }
+  return { col, count };
+}
+
+/* ============================== import: cURL ============================== */
+
+function tokenizeCurl(s) {
+  const out = [];
+  let i = 0;
+  const n = s.length;
+  while (i < n) {
+    while (i < n && /\s/.test(s[i])) i++;
+    if (i >= n) break;
+    let tok = '';
+    let consumed = false;
+    while (i < n && !/\s/.test(s[i])) {
+      const c = s[i];
+      if (c === "'" || (c === '$' && s[i + 1] === "'")) {
+        if (c === '$') i++;
+        i++;
+        while (i < n && s[i] !== "'") tok += s[i++];
+        i++;
+        consumed = true;
+      } else if (c === '"') {
+        i++;
+        while (i < n && s[i] !== '"') {
+          if (s[i] === '\\' && i + 1 < n && '"\\$`'.includes(s[i + 1])) {
+            tok += s[i + 1];
+            i += 2;
+          } else {
+            tok += s[i++];
+          }
+        }
+        i++;
+        consumed = true;
+      } else if (c === '\\' && i + 1 < n) {
+        tok += s[i + 1];
+        i += 2;
+      } else {
+        tok += s[i++];
+      }
+    }
+    if (tok !== '' || consumed) out.push(tok);
+  }
+  return out;
+}
+
+function parseCurl(text) {
+  let s = String(text || '').trim();
+  if (!/^curl\b/i.test(s)) throw new Error('The command must start with "curl"');
+  s = s.replace(/\\\s*\r?\n/g, ' ').replace(/`\s*\r?\n/g, ' ').replace(/\^\s*\r?\n/g, ' ');
+  const tokens = tokenizeCurl(s);
+
+  const req = blankRequest();
+  let url = '';
+  let method = '';
+  const dataParts = [];
+  const dataUrlencode = [];
+  let isForm = false;
+  let forceGet = false;
+
+  const SKIP_WITH_ARG = ['-o', '--output', '--connect-timeout', '-m', '--max-time', '--retry', '--cacert', '--capath', '-c', '--cookie-jar', '-w', '--write-out'];
+  const SKIP_FLAGS = ['-k', '--insecure', '--compressed', '-s', '--silent', '-L', '--location', '-v', '--verbose', '-i', '--include', '-S', '--show-error', '-g', '--globoff'];
+
+  for (let i = 1; i < tokens.length; i++) {
+    const t = tokens[i];
+    const next = () => tokens[++i] ?? '';
+    if (t.startsWith('-X') && t.length > 2) method = t.slice(2).toUpperCase();
+    else if (t === '-X' || t === '--request') method = next().toUpperCase();
+    else if (t === '-H' || t === '--header') {
+      const h = next();
+      const ci = h.indexOf(':');
+      if (ci > -1) req.headers.push({ ...newKvRow(), key: h.slice(0, ci).trim(), value: h.slice(ci + 1).trim() });
+    } else if (t === '-d' || t === '--data' || t === '--data-raw' || t === '--data-binary' || t === '--data-ascii') {
+      dataParts.push(next());
+    } else if (t === '--data-urlencode') {
+      dataUrlencode.push(next());
+    } else if (t === '-F' || t === '--form') {
+      isForm = true;
+      const f = next();
+      const eq = f.indexOf('=');
+      if (eq > -1) {
+        const k = f.slice(0, eq);
+        const v = f.slice(eq + 1);
+        if (v.startsWith('@')) req.formItems.push({ ...newKvRow(), key: k, type: 'file', filePath: v.slice(1) });
+        else req.formItems.push({ ...newKvRow(), key: k, value: v });
+      }
+    } else if (t === '-u' || t === '--user') {
+      const u = next();
+      const ci = u.indexOf(':');
+      req.auth.type = 'basic';
+      req.auth.username = ci > -1 ? u.slice(0, ci) : u;
+      req.auth.password = ci > -1 ? u.slice(ci + 1) : '';
+    } else if (t === '--url') url = next();
+    else if (t === '-G' || t === '--get') forceGet = true;
+    else if (t === '-I' || t === '--head') method = method || 'HEAD';
+    else if (t === '-A' || t === '--user-agent') req.headers.push({ ...newKvRow(), key: 'User-Agent', value: next() });
+    else if (t === '-e' || t === '--referer') req.headers.push({ ...newKvRow(), key: 'Referer', value: next() });
+    else if (t === '-b' || t === '--cookie') req.headers.push({ ...newKvRow(), key: 'Cookie', value: next() });
+    else if (SKIP_WITH_ARG.includes(t)) next();
+    else if (SKIP_FLAGS.includes(t)) {
+      /* ignored */
+    } else if (!t.startsWith('-') && !url) url = t;
+  }
+
+  if (!url) throw new Error('No URL found in the cURL command');
+
+  if (isForm) {
+    req.bodyMode = 'formdata';
+    method = method || 'POST';
+  } else if (dataParts.length || dataUrlencode.length) {
+    if (forceGet) {
+      const qs = [...dataParts, ...dataUrlencode].join('&');
+      url += (url.includes('?') ? '&' : '?') + qs;
+      method = method || 'GET';
+    } else {
+      method = method || 'POST';
+      const ctHeader = req.headers.find((h) => h.key.toLowerCase() === 'content-type');
+      const looksJson = /^\s*[[{]/.test(dataParts[0] || '');
+      if (looksJson || (ctHeader && /json/i.test(ctHeader.value))) {
+        req.bodyMode = 'raw';
+        req.rawType = 'json';
+        req.rawBody = dataParts.join('&');
+      } else {
+        req.bodyMode = 'urlencoded';
+        for (const part of [...dataParts, ...dataUrlencode].join('&').split('&')) {
+          if (part === '') continue;
+          const eq = part.indexOf('=');
+          req.formItems.push({
+            ...newKvRow(),
+            key: safeDecode(eq === -1 ? part : part.slice(0, eq)),
+            value: safeDecode(eq === -1 ? '' : part.slice(eq + 1)),
+          });
+        }
+      }
+    }
+  }
+
+  req.method = METHODS.includes(method) ? method : 'GET';
+  req.url = url;
+  return req;
+}
+
+/* ============================== code generation ============================== */
+
+const CODE_LANGS = [
+  ['curl', 'cURL'],
+  ['fetch', 'JavaScript (fetch)'],
+  ['axios', 'JavaScript (axios)'],
+  ['python', 'Python (requests)'],
+  ['powershell', 'PowerShell'],
+  ['csharp', 'C# (HttpClient)'],
+  ['go', 'Go (net/http)'],
+];
+
+const jstr = (s) => JSON.stringify(String(s ?? ''));
+
+function genFetch(p) {
+  const lines = [];
+  const opts = [`  method: ${jstr(p.method)}`];
+  if (p.headers.length) {
+    opts.push(`  headers: {\n${p.headers.map((h) => `    ${jstr(h.key)}: ${jstr(h.value)}`).join(',\n')}\n  }`);
+  }
+  if (p.bodyMode === 'formdata') {
+    lines.push('const form = new FormData();');
+    for (const f of p.formItems) {
+      lines.push(
+        f.type === 'file'
+          ? `form.append(${jstr(f.key)}, fileInput.files[0]); // ${f.filePath || 'pick a file'}`
+          : `form.append(${jstr(f.key)}, ${jstr(f.value)});`
+      );
+    }
+    lines.push('');
+    opts.push('  body: form');
+  } else if (p.bodyMode === 'urlencoded') {
+    opts.push(`  body: new URLSearchParams({\n${p.formItems.map((f) => `    ${jstr(f.key)}: ${jstr(f.value)}`).join(',\n')}\n  })`);
+  } else if (p.bodyMode === 'raw' && p.rawBody) {
+    opts.push(`  body: ${jstr(p.rawBody)}`);
+  }
+  lines.push(`const response = await fetch(${jstr(p.url)}, {`, opts.join(',\n'), '});', '', 'const data = await response.text();', 'console.log(data);');
+  return lines.join('\n');
+}
+
+function genAxios(p) {
+  const lines = ["const axios = require('axios');", ''];
+  const cfg = [`  method: ${jstr(p.method.toLowerCase())}`, `  url: ${jstr(p.url)}`];
+  if (p.headers.length) {
+    cfg.push(`  headers: {\n${p.headers.map((h) => `    ${jstr(h.key)}: ${jstr(h.value)}`).join(',\n')}\n  }`);
+  }
+  if (p.bodyMode === 'raw' && p.rawBody) cfg.push(`  data: ${jstr(p.rawBody)}`);
+  else if (p.bodyMode === 'urlencoded') {
+    cfg.push(`  data: new URLSearchParams({\n${p.formItems.map((f) => `    ${jstr(f.key)}: ${jstr(f.value)}`).join(',\n')}\n  })`);
+  } else if (p.bodyMode === 'formdata') {
+    lines.push('const FormData = require("form-data");', 'const form = new FormData();');
+    for (const f of p.formItems) {
+      lines.push(
+        f.type === 'file'
+          ? `form.append(${jstr(f.key)}, require('fs').createReadStream(${jstr(f.filePath || 'FILE_PATH')}));`
+          : `form.append(${jstr(f.key)}, ${jstr(f.value)});`
+      );
+    }
+    lines.push('');
+    cfg.push('  data: form');
+  }
+  lines.push('axios({', cfg.join(',\n'), '})', '  .then((res) => console.log(res.data))', '  .catch((err) => console.error(err));');
+  return lines.join('\n');
+}
+
+function genPython(p) {
+  const lines = ['import requests', '', `url = ${jstr(p.url)}`];
+  if (p.headers.length) {
+    lines.push(`headers = {\n${p.headers.map((h) => `    ${jstr(h.key)}: ${jstr(h.value)}`).join(',\n')}\n}`);
+  }
+  const args = [`"${p.method}"`, 'url'];
+  if (p.headers.length) args.push('headers=headers');
+  if (p.bodyMode === 'raw' && p.rawBody) {
+    if (!p.rawBody.includes('"""') && !p.rawBody.endsWith('\\')) lines.push(`payload = """${p.rawBody}"""`);
+    else lines.push(`payload = ${jstr(p.rawBody)}`);
+    args.push('data=payload');
+  } else if (p.bodyMode === 'urlencoded') {
+    lines.push(`payload = {\n${p.formItems.map((f) => `    ${jstr(f.key)}: ${jstr(f.value)}`).join(',\n')}\n}`);
+    args.push('data=payload');
+  } else if (p.bodyMode === 'formdata') {
+    const files = p.formItems.filter((f) => f.type === 'file');
+    const fields = p.formItems.filter((f) => f.type !== 'file');
+    if (fields.length) {
+      lines.push(`payload = {\n${fields.map((f) => `    ${jstr(f.key)}: ${jstr(f.value)}`).join(',\n')}\n}`);
+      args.push('data=payload');
+    }
+    if (files.length) {
+      lines.push(`files = {\n${files.map((f) => `    ${jstr(f.key)}: open(r${jstr(f.filePath || 'FILE_PATH')}, "rb")`).join(',\n')}\n}`);
+      args.push('files=files');
+    }
+  }
+  lines.push('', `response = requests.request(${args.join(', ')})`, 'print(response.text)');
+  return lines.join('\n');
+}
+
+function genPowerShell(p) {
+  const ps = (s) => `'${String(s ?? '').replace(/'/g, "''")}'`;
+  const lines = [];
+  if (p.headers.length) {
+    lines.push('$headers = @{');
+    for (const h of p.headers) lines.push(`    ${ps(h.key)} = ${ps(h.value)}`);
+    lines.push('}');
+  }
+  const args = [`-Uri ${ps(p.url)}`, `-Method ${p.method.charAt(0) + p.method.slice(1).toLowerCase()}`];
+  if (p.headers.length) args.push('-Headers $headers');
+  if (p.bodyMode === 'raw' && p.rawBody) {
+    lines.push("$body = @'", p.rawBody, "'@");
+    args.push('-Body $body');
+  } else if (p.bodyMode === 'urlencoded') {
+    lines.push('$body = @{');
+    for (const f of p.formItems) lines.push(`    ${ps(f.key)} = ${ps(f.value)}`);
+    lines.push('}');
+    args.push('-Body $body', "-ContentType 'application/x-www-form-urlencoded'");
+  } else if (p.bodyMode === 'formdata') {
+    lines.push('# -Form requires PowerShell 6+');
+    lines.push('$form = @{');
+    for (const f of p.formItems) {
+      lines.push(f.type === 'file' ? `    ${ps(f.key)} = Get-Item ${ps(f.filePath || 'FILE_PATH')}` : `    ${ps(f.key)} = ${ps(f.value)}`);
+    }
+    lines.push('}');
+    args.push('-Form $form');
+  }
+  lines.push('', `$response = Invoke-RestMethod ${args.join(' ')}`, '$response | ConvertTo-Json -Depth 10');
+  return lines.join('\n');
+}
+
+function genCSharp(p) {
+  const contentType = (p.headers.find((h) => h.key.toLowerCase() === 'content-type') || {}).value || 'text/plain';
+  const plainHeaders = p.headers.filter((h) => h.key.toLowerCase() !== 'content-type');
+  const lines = ['using System.Text;', '', 'using var client = new HttpClient();', `using var request = new HttpRequestMessage(new HttpMethod(${jstr(p.method)}), ${jstr(p.url)});`];
+  for (const h of plainHeaders) lines.push(`request.Headers.TryAddWithoutValidation(${jstr(h.key)}, ${jstr(h.value)});`);
+  if (p.bodyMode === 'raw' && p.rawBody) {
+    lines.push(`request.Content = new StringContent(${jstr(p.rawBody)}, Encoding.UTF8, ${jstr(contentType.split(';')[0])});`);
+  } else if (p.bodyMode === 'urlencoded') {
+    lines.push('request.Content = new FormUrlEncodedContent(new Dictionary<string, string>', '{');
+    for (const f of p.formItems) lines.push(`    { ${jstr(f.key)}, ${jstr(f.value)} },`);
+    lines.push('});');
+  } else if (p.bodyMode === 'formdata') {
+    lines.push('var form = new MultipartFormDataContent();');
+    for (const f of p.formItems) {
+      if (f.type === 'file') {
+        lines.push(`form.Add(new ByteArrayContent(File.ReadAllBytes(${jstr(f.filePath || 'FILE_PATH')})), ${jstr(f.key)}, Path.GetFileName(${jstr(f.filePath || 'FILE_PATH')}));`);
+      } else {
+        lines.push(`form.Add(new StringContent(${jstr(f.value)}), ${jstr(f.key)});`);
+      }
+    }
+    lines.push('request.Content = form;');
+  }
+  lines.push('', 'var response = await client.SendAsync(request);', 'Console.WriteLine(await response.Content.ReadAsStringAsync());');
+  return lines.join('\n');
+}
+
+function genGo(p) {
+  const goStr = (s) => (String(s).includes('`') ? jstr(s) : '`' + s + '`');
+  const hasBody = (p.bodyMode === 'raw' && p.rawBody) || p.bodyMode === 'urlencoded';
+  const lines = ['package main', '', 'import (', '\t"fmt"', '\t"io"', '\t"net/http"'];
+  if (hasBody) lines.push('\t"strings"');
+  if (p.bodyMode === 'urlencoded') lines.push('\t"net/url"');
+  lines.push(')', '', 'func main() {');
+  if (p.bodyMode === 'raw' && p.rawBody) {
+    lines.push(`\tpayload := strings.NewReader(${goStr(p.rawBody)})`);
+  } else if (p.bodyMode === 'urlencoded') {
+    lines.push('\tform := url.Values{}');
+    for (const f of p.formItems) lines.push(`\tform.Set(${jstr(f.key)}, ${jstr(f.value)})`);
+    lines.push('\tpayload := strings.NewReader(form.Encode())');
+  } else if (p.bodyMode === 'formdata') {
+    lines.push('\t// multipart form bodies need mime/multipart — see Go docs; fields:');
+    for (const f of p.formItems) lines.push(`\t// ${f.key} = ${f.type === 'file' ? '@' + (f.filePath || 'FILE_PATH') : f.value}`);
+  }
+  const bodyArg = hasBody ? 'payload' : 'nil';
+  lines.push(`\treq, err := http.NewRequest(${jstr(p.method)}, ${jstr(p.url)}, ${bodyArg})`);
+  lines.push('\tif err != nil {', '\t\tpanic(err)', '\t}');
+  for (const h of p.headers) lines.push(`\treq.Header.Set(${jstr(h.key)}, ${jstr(h.value)})`);
+  lines.push('', '\tres, err := http.DefaultClient.Do(req)', '\tif err != nil {', '\t\tpanic(err)', '\t}', '\tdefer res.Body.Close()', '', '\tbody, _ := io.ReadAll(res.Body)', '\tfmt.Println(string(body))', '}');
+  return lines.join('\n');
+}
+
+function genCode(lang, p) {
+  switch (lang) {
+    case 'fetch': return genFetch(p);
+    case 'axios': return genAxios(p);
+    case 'python': return genPython(p);
+    case 'powershell': return genPowerShell(p);
+    case 'csharp': return genCSharp(p);
+    case 'go': return genGo(p);
+    default: return genCurl(p);
+  }
+}
+
+function openCodeModal() {
+  const payload = buildPayload(activeTab());
+  if (!payload) {
+    toast('Enter a request URL first');
+    return;
+  }
+  const body = el('div');
+  const f = el('div', 'form-field');
+  f.append(el('label', null, 'Language'));
+  const sel = document.createElement('select');
+  for (const [v, label] of CODE_LANGS) {
+    const o = el('option', null, label);
+    o.value = v;
+    sel.append(o);
+  }
+  sel.value = CODE_LANGS.some(([v]) => v === state.settings.codeLang) ? state.settings.codeLang : 'curl';
+  f.append(sel);
+  body.append(f);
+
+  const box = el('div', 'code-box');
+  const pre = el('pre', 'code');
+  box.append(pre);
+  body.append(box);
+
+  const render = () => {
+    pre.textContent = genCode(sel.value, payload);
+  };
+  sel.addEventListener('change', () => {
+    state.settings.codeLang = sel.value;
+    persist();
+    render();
+  });
+  render();
+
+  modal('Code Snippet', body, [
+    {
+      label: 'Copy',
+      primary: true,
+      onClick: () => {
+        navigator.clipboard.writeText(pre.textContent);
+        toast('Snippet copied to clipboard');
+        return false;
+      },
+    },
+    { label: 'Close' },
+  ]);
+}
+
 /* ============================== init ============================== */
 
 const normSaved = (s) => ({ id: s.id || uid(), name: s.name || 'Request', request: normalizeRequest(s.request) });
+
+function hydrateState(stored) {
+  state.collections = (Array.isArray(stored.collections) ? stored.collections : []).map((c) => ({
+    id: c.id || uid(),
+    name: c.name || 'Collection',
+    open: c.open !== false,
+    requests: (Array.isArray(c.requests) ? c.requests : []).map(normSaved),
+    folders: (Array.isArray(c.folders) ? c.folders : []).map((f) => ({
+      id: f.id || uid(),
+      name: f.name || 'Folder',
+      open: f.open !== false,
+      requests: (Array.isArray(f.requests) ? f.requests : []).map(normSaved),
+    })),
+  }));
+  state.history = Array.isArray(stored.history) ? stored.history : [];
+  state.environments = Array.isArray(stored.environments) ? stored.environments : [];
+  for (const e of state.environments) if (!Array.isArray(e.vars)) e.vars = [];
+  state.activeEnvId = stored.activeEnvId || null;
+  state.globals = Array.isArray(stored.globals) ? stored.globals : [];
+  state.cookies = Array.isArray(stored.cookies) ? stored.cookies : [];
+  state.settings = { ...DEFAULT_SETTINGS, ...(stored.settings || {}) };
+  state.tabs = (Array.isArray(stored.tabs) ? stored.tabs : [])
+    .filter((t) => t && t.request)
+    .map((t) => ({ ...makeTab(t.request, t.name, t.savedRef), id: t.id || uid() }));
+  state.activeTabId = stored.activeTabId;
+  if (!state.tabs.length) state.tabs.push(makeTab());
+  if (!state.tabs.some((t) => t.id === state.activeTabId)) state.activeTabId = state.tabs[0].id;
+}
+
+function restoreBackup(obj) {
+  hydrateState(obj);
+  applyTheme();
+  renderEnvSelect();
+  renderSidebar();
+  renderTabsBar();
+  loadEditor();
+  persist();
+}
 
 async function init() {
   let stored = null;
@@ -1933,29 +4158,7 @@ async function init() {
     /* first run */
   }
 
-  if (stored) {
-    state.collections = (Array.isArray(stored.collections) ? stored.collections : []).map((c) => ({
-      id: c.id || uid(),
-      name: c.name || 'Collection',
-      open: c.open !== false,
-      requests: (Array.isArray(c.requests) ? c.requests : []).map(normSaved),
-      folders: (Array.isArray(c.folders) ? c.folders : []).map((f) => ({
-        id: f.id || uid(),
-        name: f.name || 'Folder',
-        open: f.open !== false,
-        requests: (Array.isArray(f.requests) ? f.requests : []).map(normSaved),
-      })),
-    }));
-    state.history = Array.isArray(stored.history) ? stored.history : [];
-    state.environments = Array.isArray(stored.environments) ? stored.environments : [];
-    for (const e of state.environments) if (!Array.isArray(e.vars)) e.vars = [];
-    state.activeEnvId = stored.activeEnvId || null;
-    state.settings = { ...DEFAULT_SETTINGS, ...(stored.settings || {}) };
-    state.tabs = (Array.isArray(stored.tabs) ? stored.tabs : [])
-      .filter((t) => t && t.request)
-      .map((t) => ({ ...makeTab(t.request, t.name, t.savedRef), id: t.id || uid() }));
-    state.activeTabId = stored.activeTabId;
-  }
+  if (stored) hydrateState(stored);
 
   if (!state.tabs.length) state.tabs.push(makeTab());
   if (!state.tabs.some((t) => t.id === state.activeTabId)) state.activeTabId = state.tabs[0].id;
@@ -1975,7 +4178,9 @@ async function init() {
     persist();
   });
   $('#btnManageEnv').addEventListener('click', openEnvManager);
+  $('#btnCookies').addEventListener('click', openCookieModal);
   $('#btnSettings').addEventListener('click', openSettings);
+  window.lostman.onStreamEvent(handleStreamEvent);
 
   renderEnvSelect();
   renderSidebar();

@@ -16,7 +16,8 @@
     </div>
     <div class="env-area">
       <select id="envSelect" title="Active environment"></select>
-      <button id="btnManageEnv" class="ghost" title="Manage environments">Environments</button>
+      <button id="btnManageEnv" class="ghost" title="Manage environments and globals">Environments</button>
+      <button id="btnCookies" class="ghost" title="Cookie manager">Cookies</button>
       <button id="btnSettings" class="ghost" title="Settings">Settings</button>
     </div>
   </header>
@@ -50,12 +51,14 @@
             <option>DELETE</option>
             <option>HEAD</option>
             <option>OPTIONS</option>
+            <option>WS</option>
+            <option>SSE</option>
           </select>
           <input id="url" type="text" spellcheck="false" autocomplete="off"
                  placeholder="Enter request URL — e.g. https://api.example.com/users?page=2   ({{variables}} supported)">
           <button id="btnSend" class="primary" title="Send request (Ctrl+Enter)">Send</button>
           <button id="btnSave" title="Save to collection (Ctrl+S) — right-click a tab for Save As">Save</button>
-          <button id="btnCurl" class="ghost" title="Copy as cURL command">cURL</button>
+          <button id="btnCode" class="ghost" title="Generate code snippet (cURL, fetch, axios, Python, PowerShell, C#, Go)">&lt;/&gt;</button>
         </div>
 
         <div class="editor-tabs">
@@ -63,6 +66,7 @@
           <button data-panel="headers">Headers<span id="cntHeaders" class="cnt"></span></button>
           <button data-panel="body">Body<span id="dotBody" class="dot hidden"></span></button>
           <button data-panel="auth">Auth<span id="dotAuth" class="dot hidden"></span></button>
+          <button data-panel="scripts">Scripts<span id="dotScripts" class="dot hidden"></span></button>
         </div>
 
         <div id="panels">
@@ -82,6 +86,7 @@
               <label><input type="radio" name="bodyMode" value="formdata"> form-data</label>
               <label><input type="radio" name="bodyMode" value="urlencoded"> x-www-form-urlencoded</label>
               <label><input type="radio" name="bodyMode" value="raw"> raw</label>
+              <label><input type="radio" name="bodyMode" value="graphql"> GraphQL</label>
               <select id="rawType" class="hidden">
                 <option value="json">JSON</option>
                 <option value="text">Text</option>
@@ -92,6 +97,12 @@
             <textarea id="rawBody" class="body-area hidden" spellcheck="false"
                       placeholder='{&#10;  "key": "value"&#10;}'></textarea>
             <div id="kvForm" class="kv body-area hidden"></div>
+            <div id="gqlArea" class="hidden">
+              <div class="panel-hint">Query</div>
+              <textarea id="gqlQuery" spellcheck="false" placeholder="query { user(id: 1) { name email } }"></textarea>
+              <div class="panel-hint" style="margin-top:8px">Variables (JSON)</div>
+              <textarea id="gqlVariables" spellcheck="false" placeholder='{ "id": 1 }'></textarea>
+            </div>
           </div>
 
           <div id="panel-auth" class="panel">
@@ -102,6 +113,9 @@
                 <option value="bearer">Bearer Token</option>
                 <option value="basic">Basic Auth</option>
                 <option value="apikey">API Key</option>
+                <option value="oauth2">OAuth 2.0</option>
+                <option value="digest">Digest Auth</option>
+                <option value="awsv4">AWS Signature v4</option>
               </select>
             </div>
             <div id="auth-bearer" class="auth-group hidden">
@@ -125,6 +139,69 @@
                 <option value="query">Query Params</option>
               </select>
             </div>
+            <div id="auth-oauth2" class="auth-group hidden">
+              <label for="oauthGrant">Grant type</label>
+              <select id="oauthGrant">
+                <option value="client_credentials">Client Credentials</option>
+                <option value="auth_code">Authorization Code (PKCE)</option>
+              </select>
+              <label for="oauthAuthUrl" class="oauth-ac-only">Auth URL</label>
+              <input id="oauthAuthUrl" class="oauth-ac-only" type="text" spellcheck="false" placeholder="https://auth.example.com/authorize">
+              <label for="oauthTokenUrl">Token URL</label>
+              <input id="oauthTokenUrl" type="text" spellcheck="false" placeholder="https://auth.example.com/oauth/token">
+              <label for="oauthClientId">Client ID</label>
+              <input id="oauthClientId" type="text" spellcheck="false">
+              <label for="oauthClientSecret">Client secret</label>
+              <input id="oauthClientSecret" type="password" spellcheck="false" placeholder="optional for PKCE">
+              <label for="oauthScope">Scope</label>
+              <input id="oauthScope" type="text" spellcheck="false" placeholder="e.g. read write">
+              <label for="oauthRedirect" class="oauth-ac-only">Redirect URI</label>
+              <input id="oauthRedirect" class="oauth-ac-only" type="text" spellcheck="false">
+              <label for="oauthClientAuth">Send credentials</label>
+              <select id="oauthClientAuth">
+                <option value="body">In request body</option>
+                <option value="basic">As Basic auth header</option>
+              </select>
+              <label></label>
+              <div class="oauth-actions">
+                <button id="btnOauthFetch" class="primary">Fetch Token</button>
+                <button id="btnOauthClear">Clear Token</button>
+              </div>
+              <label></label>
+              <div id="oauthStatus" class="panel-hint" style="margin:0">No token fetched yet.</div>
+            </div>
+            <div id="auth-digest" class="auth-group hidden">
+              <label for="digestUser">Username</label>
+              <input id="digestUser" type="text" spellcheck="false">
+              <label for="digestPass">Password</label>
+              <input id="digestPass" type="password">
+              <label></label>
+              <div class="panel-hint" style="margin:0">The 401 challenge is answered automatically (MD5 / SHA-256, qop=auth).</div>
+            </div>
+            <div id="auth-awsv4" class="auth-group hidden">
+              <label for="awsAccessKey">Access key</label>
+              <input id="awsAccessKey" type="text" spellcheck="false">
+              <label for="awsSecretKey">Secret key</label>
+              <input id="awsSecretKey" type="password" spellcheck="false">
+              <label for="awsRegion">Region</label>
+              <input id="awsRegion" type="text" spellcheck="false" placeholder="us-east-1">
+              <label for="awsService">Service</label>
+              <input id="awsService" type="text" spellcheck="false" placeholder="execute-api">
+              <label for="awsSession">Session token</label>
+              <input id="awsSession" type="text" spellcheck="false" placeholder="optional">
+            </div>
+          </div>
+
+          <div id="panel-scripts" class="panel">
+            <div class="panel-hint">
+              Pre-request script runs before sending (mutate <code>pm.request</code>, set variables). Tests run after the
+              response: <code>pm.test("name", () =&gt; expect(pm.response.code).toBe(200))</code>.
+              Chain responses with <code>{{res.&lt;RequestName&gt;.body.&lt;path&gt;}}</code> or <code>{{res.last.body…}}</code>.
+            </div>
+            <div class="panel-hint">Pre-request Script</div>
+            <textarea id="preScript" spellcheck="false" placeholder='pm.request.headers.add({ key: "X-Time", value: Date.now() });'></textarea>
+            <div class="panel-hint" style="margin-top:8px">Tests</div>
+            <textarea id="testScript" spellcheck="false" placeholder='pm.test("status is 200", () => expect(pm.response.code).toBe(200));&#10;pm.test("has token", () => expect(pm.response.json()).toHaveProperty("token"));'></textarea>
           </div>
         </div>
       </div>
@@ -136,16 +213,19 @@
           <div class="resp-tabs">
             <button data-rtab="body" class="active">Body</button>
             <button data-rtab="headers">Headers<span id="respHdrCount" class="cnt"></span></button>
+            <button data-rtab="tests" id="respTestsBtn" class="hidden">Tests<span id="respTestCount" class="cnt"></span></button>
           </div>
           <div class="resp-views" id="respViews">
             <button data-rview="pretty" class="active">Pretty</button>
             <button data-rview="raw">Raw</button>
             <button data-rview="preview" id="btnPreview" class="hidden">Preview</button>
+            <button data-rview="diff" id="btnDiff" class="hidden" title="Compare with the pinned response">Diff</button>
           </div>
           <div class="resp-meta">
             <span id="respStatus" class="pill"></span>
             <span id="respTime" class="meta"></span>
             <span id="respSize" class="meta"></span>
+            <button id="btnPinResp" class="ghost" title="Pin this response as the diff baseline">Pin</button>
             <button id="btnFindResp" class="ghost" title="Find in response (Ctrl+F)">Find</button>
             <button id="btnCopyResp" class="ghost" title="Copy response body">Copy</button>
             <button id="btnSaveResp" class="ghost" title="Save response body to a file">Save</button>
@@ -166,6 +246,7 @@
   <div id="modalRoot"></div>
   <div id="toastRoot"></div>
   <div id="ctxRoot"></div>
+  <div id="acRoot"></div>
 
   <script src="app.js"></script>
 </body>
