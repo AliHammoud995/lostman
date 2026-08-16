@@ -53,12 +53,16 @@ Ideas for future versions, roughly ordered by value vs. effort. Check items off 
 
 ## Tier 4 — Polish & distribution
 
+- [x] **Linux builds** — AppImage + .deb targets (`npm run dist:linux`); the app itself is
+      fully cross-platform. *(shipped in v1.3.1)*
+- [x] **CI release pipeline** — GitHub Actions builds Windows + Linux packages on every
+      `v*` tag and attaches them to a GitHub Release. *(shipped in v1.3.1)*
+
 - [ ] **Proxy support** — manual proxy config plus use-system-proxy option.
 - [ ] **Client certificates** — mTLS support per domain.
 - [ ] **Streamed large responses** — handle 100 MB+ bodies without loading them fully into memory.
 - [ ] **Portable data mode** — optionally store `lostman-data.json` next to the .exe (USB-stick friendly).
 - [ ] **Auto-updates** — electron-updater + GitHub Releases.
-- [ ] **CI release pipeline** — GitHub Actions workflow that builds the installer/portable exe on every tagged release.
 - [ ] **Command palette** — Ctrl+K to jump to any saved request or action.
 - [ ] **Multi-window** — open a second Lostman window.
 - [ ] **Tests & linting** — unit tests for request building/env substitution, ESLint + Prettier.

@@ -7,8 +7,8 @@
 
 # Lostman
 
-A free, offline Postman-style API client for Windows. No login, no account, no cloud sync —
-everything is stored locally on your machine.
+A free, offline Postman-style API client for **Windows and Linux**. No login, no account,
+no cloud sync — everything is stored locally on your machine.
 
 ## Features
 
@@ -75,20 +75,29 @@ npm install
 npm start
 ```
 
-## Build a Windows installer / portable exe
+## Build installers
 
 ```
-npm run dist
+npm run dist         # Windows: NSIS installer + portable .exe
+npm run dist:linux   # Linux:   AppImage + .deb (run this on Linux)
+npm run dist:all     # both
 ```
 
-Outputs an NSIS installer and a portable `.exe` (with the Lostman icon) to the `dist/` folder.
+Everything lands in the `dist/` folder with the Lostman icon. The AppImage runs on any
+distro (`chmod +x Lostman-*.AppImage && ./Lostman-*.AppImage`); the `.deb` installs on
+Debian/Ubuntu with `sudo dpkg -i`.
+
+Official builds are produced by CI: pushing a `v*` tag makes GitHub Actions build the
+Windows installer/portable exe and the Linux AppImage/deb, and attach them all to a
+GitHub Release automatically.
 
 ## Where is my data?
 
 Everything (collections, history, environments, open tabs, settings) lives in a single JSON file:
 
 ```
-%AppData%\Lostman\lostman-data.json
+Windows:  %AppData%\Lostman\lostman-data.json
+Linux:    ~/.config/Lostman/lostman-data.json
 ```
 
 Delete that file to reset the app. Copy it to another machine to move your data.
