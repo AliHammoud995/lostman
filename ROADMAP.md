@@ -58,12 +58,18 @@ Ideas for future versions, roughly ordered by value vs. effort. Check items off 
 - [x] **CI release pipeline** — GitHub Actions builds Windows + Linux packages on every
       `v*` tag and attaches them to a GitHub Release. *(shipped in v1.3.1)*
 
-- [ ] **Proxy support** — manual proxy config plus use-system-proxy option.
-- [ ] **Client certificates** — mTLS support per domain.
-- [ ] **Streamed large responses** — handle 100 MB+ bodies without loading them fully into memory.
-- [ ] **Portable data mode** — optionally store `lostman-data.json` next to the .exe (USB-stick friendly).
-- [ ] **Auto-updates** — electron-updater + GitHub Releases.
-- [ ] **Command palette** — Ctrl+K to jump to any saved request or action.
-- [ ] **Multi-window** — open a second Lostman window.
-- [ ] **Tests & linting** — unit tests for request building/env substitution, ESLint + Prettier.
+- [x] **Proxy support** — none / system proxy / manual URL (with auth) + bypass list;
+      HTTP requests go via the proxy, HTTPS through a CONNECT tunnel. *(v1.4)*
+- [x] **Client certificates** — per-hostname mTLS (PFX or PEM cert+key, wildcard hosts),
+      managed in Settings. *(v1.4)*
+- [x] **Streamed large responses** — bodies over 5 MB stream to disk (up to 500 MB) with a
+      2 MB preview in the viewer; Save writes the exact full bytes. *(v1.4)*
+- [x] **Portable data mode** — Settings can move `lostman-data.json` next to the app
+      (auto-detected on launch; USB-stick friendly). *(v1.4)*
+- [x] **Auto-updates** — electron-updater checks GitHub Releases on startup (installer and
+      AppImage builds) and offers a restart when an update is downloaded. *(v1.4)*
+- [x] **Command palette** — Ctrl+K fuzzy-searches saved requests, tabs and actions. *(v1.4)*
+- [x] **Multi-window** — Ctrl+Shift+N or the palette; shared data syncs between windows. *(v1.4)*
+- [x] **Tests & linting** — 63 unit tests (`npm test`) + ESLint/Prettier, enforced by a CI
+      workflow on every push. *(v1.4)*
 - [ ] **Localization** — extract UI strings so translations are possible.

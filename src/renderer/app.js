@@ -100,6 +100,8 @@ const DEFAULT_SETTINGS = {
   verifySsl: true,
   codeLang: 'curl',
   cookiesEnabled: true,
+  proxy: { mode: 'none', url: '', bypass: '' },
+  clientCerts: [],
 };
 
 function blankRequest() {
@@ -341,6 +343,70 @@ function openSettings() {
   cSsl.append(sslCb, el('span', null, 'Verify SSL certificates'));
   const sslNote = el('div', 'form-note', 'Turn off only for local servers with self-signed certificates.');
 
+  const fProxy = el('div', 'form-field');
+  fProxy.append(el('label', null, 'Proxy'));
+  const proxySel = document.createElement('select');
+  for (const [v, label] of [['none', 'No proxy'], ['system', 'Use system proxy'], ['manual', 'Manual proxy']]) {
+    const o = el('option', null, label);
+    o.value = v;
+    proxySel.append(o);
+  }
+  proxySel.value = s.proxy.mode || 'none';
+  fProxy.append(proxySel);
+
+  const proxyUrlField = el('div', 'form-field');
+  proxyUrlField.append(el('label', null, 'Proxy URL (http://user:pass@host:port)'));
+  const proxyUrlInput = document.createElement('input');
+  proxyUrlInput.type = 'text';
+  proxyUrlInput.spellcheck = false;
+  proxyUrlInput.placeholder = 'http://127.0.0.1:8888';
+  proxyUrlInput.value = s.proxy.url || '';
+  proxyUrlField.append(proxyUrlInput);
+
+  const proxyBypassField = el('div', 'form-field');
+  proxyBypassField.append(el('label', null, 'Bypass proxy for (comma-separated hosts)'));
+  const proxyBypassInput = document.createElement('input');
+  proxyBypassInput.type = 'text';
+  proxyBypassInput.spellcheck = false;
+  proxyBypassInput.placeholder = 'localhost, 127.0.0.1, .internal.dev';
+  proxyBypassInput.value = s.proxy.bypass || '';
+  proxyBypassField.append(proxyBypassInput);
+
+  const syncProxyVisibility = () => {
+    proxyUrlField.classList.toggle('hidden', proxySel.value !== 'manual');
+    proxyBypassField.classList.toggle('hidden', proxySel.value === 'none');
+  };
+  proxySel.addEventListener('change', syncProxyVisibility);
+  syncProxyVisibility();
+
+  const fCerts = el('div', 'form-field');
+  fCerts.append(el('label', null, 'Client certificates (mTLS)'));
+  const certList = el('div');
+  const renderCerts = () => {
+    certList.innerHTML = '';
+    if (!state.settings.clientCerts.length) {
+      certList.append(el('div', 'panel-hint', 'None configured. Certificates are matched by hostname and used automatically.'));
+      return;
+    }
+    for (const c of state.settings.clientCerts) {
+      const row = el('div', 'cookie-row');
+      row.append(el('span', 'ck-name', c.host), el('span', 'ck-meta', c.type === 'pfx' ? 'PFX/P12' : 'PEM cert + key'));
+      const del = el('button', 'kv-del', '✕');
+      del.addEventListener('click', () => {
+        state.settings.clientCerts = state.settings.clientCerts.filter((x) => x !== c);
+        persist();
+        renderCerts();
+      });
+      row.append(del);
+      certList.append(row);
+    }
+  };
+  renderCerts();
+  const addCertBtn = el('button', null, '+ Add certificate…');
+  addCertBtn.style.marginTop = '6px';
+  addCertBtn.addEventListener('click', () => openCertModal(renderCerts));
+  fCerts.append(certList, addCertBtn);
+
   const fData = el('div', 'form-field');
   fData.append(el('label', null, 'Data'));
   const dataRow = el('div');
@@ -370,7 +436,37 @@ function openSettings() {
   dataRow.append(backupBtn, restoreBtn);
   fData.append(dataRow);
 
-  body.append(fTheme, fTimeout, cRedir, cSsl, sslNote, fData);
+  const dataInfo = el('div', 'panel-hint', 'Data file: …');
+  dataInfo.style.marginTop = '8px';
+  const portableBtn = el('button', null, '…');
+  portableBtn.style.marginTop = '4px';
+  const refreshDataInfo = async () => {
+    const info = await window.lostman.storeInfo();
+    dataInfo.textContent = 'Data file: ' + info.path;
+    if (info.portable) {
+      portableBtn.textContent = 'Switch to standard mode (AppData)';
+      portableBtn.disabled = false;
+    } else {
+      portableBtn.textContent = 'Switch to portable mode (store data next to the app)';
+      portableBtn.disabled = !info.portableAvailable;
+      portableBtn.title = info.portableAvailable ? '' : 'The app folder is not writable';
+    }
+  };
+  portableBtn.addEventListener('click', async () => {
+    const info = await window.lostman.storeInfo();
+    const r = await window.lostman.setPortable(!info.portable);
+    if (r.ok) {
+      persist();
+      toast('Data location changed');
+    } else {
+      toast(r.error || 'Could not change the data location');
+    }
+    refreshDataInfo();
+  });
+  refreshDataInfo();
+  fData.append(dataInfo, portableBtn);
+
+  body.append(fTheme, fTimeout, cRedir, cSsl, sslNote, fProxy, proxyUrlField, proxyBypassField, fCerts, fData);
 
   const m = modal('Settings', body, [
     { label: 'Cancel' },
@@ -384,10 +480,109 @@ function openSettings() {
           timeoutMs: Math.max(0, parseInt(timeoutInput.value, 10) || 0),
           followRedirects: redirCb.checked,
           verifySsl: sslCb.checked,
+          proxy: {
+            mode: proxySel.value,
+            url: proxyUrlInput.value.trim(),
+            bypass: proxyBypassInput.value.trim(),
+          },
         };
         applyTheme();
         persist();
         toast('Settings saved');
+      },
+    },
+  ]);
+}
+
+function openCertModal(onDone) {
+  const body = el('div');
+
+  const fHost = el('div', 'form-field');
+  fHost.append(el('label', null, 'Hostname (e.g. api.example.com or *.example.com)'));
+  const hostInput = document.createElement('input');
+  hostInput.type = 'text';
+  hostInput.spellcheck = false;
+  fHost.append(hostInput);
+
+  const fType = el('div', 'form-field');
+  fType.append(el('label', null, 'Certificate type'));
+  const typeSel = document.createElement('select');
+  for (const [v, label] of [['pfx', 'PFX / PKCS#12 (.pfx / .p12)'], ['pem', 'PEM certificate + key']]) {
+    const o = el('option', null, label);
+    o.value = v;
+    typeSel.append(o);
+  }
+  fType.append(typeSel);
+
+  const mkFilePick = (labelText) => {
+    const field = el('div', 'form-field');
+    field.append(el('label', null, labelText));
+    const btn = el('button', 'kv-file-btn', 'Choose file…');
+    btn.style.width = '100%';
+    let filePath = '';
+    btn.addEventListener('click', async () => {
+      const p = await window.lostman.pickFile();
+      if (p) {
+        filePath = p;
+        btn.textContent = basename(p);
+        btn.title = p;
+      }
+    });
+    field.append(btn);
+    return { field, get path() { return filePath; } };
+  };
+
+  const pfxPick = mkFilePick('PFX file');
+  const certPick = mkFilePick('Certificate file (.crt / .pem)');
+  const keyPick = mkFilePick('Private key file (.key / .pem)');
+
+  const fPass = el('div', 'form-field');
+  fPass.append(el('label', null, 'Passphrase (optional)'));
+  const passInput = document.createElement('input');
+  passInput.type = 'password';
+  fPass.append(passInput);
+
+  const syncType = () => {
+    pfxPick.field.classList.toggle('hidden', typeSel.value !== 'pfx');
+    certPick.field.classList.toggle('hidden', typeSel.value !== 'pem');
+    keyPick.field.classList.toggle('hidden', typeSel.value !== 'pem');
+  };
+  typeSel.addEventListener('change', syncType);
+  syncType();
+
+  body.append(fHost, fType, pfxPick.field, certPick.field, keyPick.field, fPass);
+
+  modal('Add Client Certificate', body, [
+    { label: 'Cancel' },
+    {
+      label: 'Add',
+      primary: true,
+      onClick: () => {
+        const host = hostInput.value.trim();
+        if (!host) {
+          toast('Enter a hostname');
+          return false;
+        }
+        if (typeSel.value === 'pfx' && !pfxPick.path) {
+          toast('Choose a PFX file');
+          return false;
+        }
+        if (typeSel.value === 'pem' && (!certPick.path || !keyPick.path)) {
+          toast('Choose both certificate and key files');
+          return false;
+        }
+        state.settings.clientCerts.push({
+          id: uid(),
+          host,
+          type: typeSel.value,
+          pfxPath: pfxPick.path,
+          certPath: certPick.path,
+          keyPath: keyPick.path,
+          passphrase: passInput.value,
+        });
+        persist();
+        if (onDone) onDone();
+        toast(`Client certificate added for ${host}`);
       },
     },
   ]);
@@ -916,6 +1111,8 @@ function buildPayloadFromRequest(r, extra) {
       timeoutMs: state.settings.timeoutMs,
       followRedirects: state.settings.followRedirects,
       verifySsl: state.settings.verifySsl,
+      proxy: state.settings.proxy,
+      clientCerts: state.settings.clientCerts,
     },
   };
 }
@@ -2437,6 +2634,146 @@ function initSplitter() {
   });
 }
 
+/* ============================== command palette ============================== */
+
+function fuzzyScore(query, target) {
+  const q = query.toLowerCase();
+  const s = target.toLowerCase();
+  let qi = 0;
+  let score = 0;
+  let streak = 0;
+  for (let i = 0; i < s.length && qi < q.length; i++) {
+    if (s[i] === q[qi]) {
+      qi++;
+      streak++;
+      score += 1 + streak;
+    } else {
+      streak = 0;
+    }
+  }
+  if (qi < q.length) return -1;
+  return score - s.length * 0.01;
+}
+
+function paletteItems() {
+  const items = [];
+  for (const col of state.collections) {
+    const addReq = (saved, folder) =>
+      items.push({
+        label: `${col.name}${folder ? ' / ' + folder.name : ''} / ${saved.name}`,
+        method: saved.request.method,
+        hint: saved.request.url,
+        run: () => openSavedRequest(col, folder, saved),
+      });
+    for (const f of col.folders || []) for (const saved of f.requests) addReq(saved, f);
+    for (const saved of col.requests) addReq(saved, null);
+    items.push({ label: `Run collection: ${col.name}`, run: () => openRunnerModal(col) });
+  }
+  for (const t of state.tabs) {
+    if (t.id !== state.activeTabId) items.push({ label: `Switch to tab: ${tabLabel(t)}`, method: t.request.method, run: () => switchTab(t.id) });
+  }
+  items.push(
+    { label: 'New Request Tab', hint: 'Ctrl+T', run: newTab },
+    { label: 'New Window', hint: 'Ctrl+Shift+N', run: () => window.lostman.newWindow() },
+    { label: 'Send Request', hint: 'Ctrl+Enter', run: sendActive },
+    { label: 'Save Request', hint: 'Ctrl+S', run: saveActive },
+    { label: 'Generate Code Snippet', run: openCodeModal },
+    { label: 'Import (Postman / OpenAPI / cURL / backup)', run: openImportModal },
+    { label: 'Manage Environments', run: openEnvManager },
+    { label: 'Manage Cookies', run: openCookieModal },
+    { label: 'Open Settings', run: openSettings },
+    {
+      label: 'Toggle Light / Dark Theme',
+      run: () => {
+        state.settings.theme = state.settings.theme === 'light' ? 'dark' : 'light';
+        applyTheme();
+        persist();
+      },
+    }
+  );
+  return items;
+}
+
+function openPalette() {
+  const root = $('#modalRoot');
+  const overlay = el('div', 'modal-overlay palette-overlay');
+  const box = el('div', 'palette');
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.spellcheck = false;
+  input.placeholder = 'Search requests, tabs and actions…';
+  const list = el('div', 'palette-list');
+  box.append(input, list);
+  overlay.append(box);
+
+  const all = paletteItems();
+  let filtered = all.slice(0, 12);
+  let sel = 0;
+
+  function close() {
+    overlay.remove();
+  }
+  function renderList() {
+    list.innerHTML = '';
+    filtered.forEach((item, i) => {
+      const row = el('div', 'palette-item' + (i === sel ? ' sel' : ''));
+      if (item.method) row.append(el('span', 'method-chip m-' + item.method, shortMethod(item.method)));
+      row.append(el('span', 'palette-label', item.label));
+      if (item.hint) row.append(el('span', 'palette-hint', item.hint));
+      row.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        close();
+        item.run();
+      });
+      row.addEventListener('mousemove', () => {
+        if (sel !== i) {
+          sel = i;
+          renderList();
+        }
+      });
+      list.append(row);
+    });
+    if (!filtered.length) list.append(el('div', 'palette-empty', 'No matches'));
+  }
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    if (!q) filtered = all.slice(0, 12);
+    else {
+      filtered = all
+        .map((item) => ({ item, score: fuzzyScore(q, item.label + ' ' + (item.hint || '')) }))
+        .filter((x) => x.score >= 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 12)
+        .map((x) => x.item);
+    }
+    sel = 0;
+    renderList();
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (filtered.length) sel = (sel + (e.key === 'ArrowDown' ? 1 : filtered.length - 1)) % filtered.length;
+      renderList();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const item = filtered[sel];
+      if (item) {
+        close();
+        item.run();
+      }
+    } else if (e.key === 'Escape') {
+      close();
+    }
+  });
+  overlay.addEventListener('mousedown', (e) => {
+    if (e.target === overlay) close();
+  });
+
+  root.append(overlay);
+  renderList();
+  input.focus();
+}
+
 /* ============================== keyboard shortcuts ============================== */
 
 function initShortcuts() {
@@ -2459,6 +2796,12 @@ function initShortcuts() {
     } else if (k === 'f') {
       e.preventDefault();
       openRespSearch();
+    } else if (k === 'k' || k === 'p') {
+      e.preventDefault();
+      openPalette();
+    } else if (k === 'n' && e.shiftKey) {
+      e.preventDefault();
+      window.lostman.newWindow();
     }
   });
 }
@@ -4132,6 +4475,8 @@ function hydrateState(stored) {
   state.globals = Array.isArray(stored.globals) ? stored.globals : [];
   state.cookies = Array.isArray(stored.cookies) ? stored.cookies : [];
   state.settings = { ...DEFAULT_SETTINGS, ...(stored.settings || {}) };
+  state.settings.proxy = { ...DEFAULT_SETTINGS.proxy, ...((stored.settings && stored.settings.proxy) || {}) };
+  if (!Array.isArray(state.settings.clientCerts)) state.settings.clientCerts = [];
   state.tabs = (Array.isArray(stored.tabs) ? stored.tabs : [])
     .filter((t) => t && t.request)
     .map((t) => ({ ...makeTab(t.request, t.name, t.savedRef), id: t.id || uid() }));
@@ -4181,6 +4526,23 @@ async function init() {
   $('#btnCookies').addEventListener('click', openCookieModal);
   $('#btnSettings').addEventListener('click', openSettings);
   window.lostman.onStreamEvent(handleStreamEvent);
+  window.lostman.onStoreChanged((data) => {
+    // Another window saved: adopt the shared slices, keep this window's tabs and settings.
+    if (!data) return;
+    state.collections = (Array.isArray(data.collections) ? data.collections : []).map((c) => ({
+      ...c,
+      folders: Array.isArray(c.folders) ? c.folders : [],
+      requests: Array.isArray(c.requests) ? c.requests : [],
+    }));
+    state.history = Array.isArray(data.history) ? data.history : state.history;
+    state.environments = Array.isArray(data.environments) ? data.environments : state.environments;
+    for (const e of state.environments) if (!Array.isArray(e.vars)) e.vars = [];
+    state.globals = Array.isArray(data.globals) ? data.globals : state.globals;
+    state.cookies = Array.isArray(data.cookies) ? data.cookies : state.cookies;
+    state.activeEnvId = data.activeEnvId || null;
+    renderEnvSelect();
+    renderSidebar();
+  });
 
   renderEnvSelect();
   renderSidebar();

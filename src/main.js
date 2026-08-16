@@ -4,6 +4,8 @@ const fs = require('fs/promises');
 const fsSync = require('fs');
 const http = require('http');
 const https = require('https');
+const tls = require('tls');
+const os = require('os');
 const zlib = require('zlib');
 const crypto = require('crypto');
 
@@ -12,21 +14,58 @@ app.setName('Lostman');
 Menu.setApplicationMenu(null);
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
-const MAX_BODY_BYTES = 50 * 1024 * 1024;
+// Bodies beyond this stay on disk instead of memory; the first chunk is kept as a preview.
+const STREAM_THRESHOLD = 5 * 1024 * 1024;
+const MAX_BODY_BYTES = 500 * 1024 * 1024;
 const MAX_REDIRECTS = 10;
 
 const inflight = new Map();
-const dataFile = () => path.join(app.getPath('userData'), 'lostman-data.json');
 
-// Full response bodies are cached here briefly so "Save response" writes exact bytes
-// even when the text shown in the UI was truncated.
+// Portable mode: if lostman-data.json sits next to the executable, use it.
+function dataLocations() {
+  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe'));
+  const portablePath = path.join(portableDir, 'lostman-data.json');
+  const standardPath = path.join(app.getPath('userData'), 'lostman-data.json');
+  const portable = fsSync.existsSync(portablePath);
+  return { portableDir, portablePath, standardPath, portable };
+}
+const dataFile = () => {
+  const loc = dataLocations();
+  return loc.portable ? loc.portablePath : loc.standardPath;
+};
+
+// Full response bodies are cached briefly so "Save response" writes exact bytes even when
+// the UI preview was truncated. Entries are either a Buffer or { file } for streamed bodies.
 const respCache = new Map();
-function cacheResponse(buf) {
+function cacheResponse(entry) {
   const id = crypto.randomUUID();
-  respCache.set(id, buf);
-  while (respCache.size > 8) respCache.delete(respCache.keys().next().value);
+  respCache.set(id, entry);
+  while (respCache.size > 8) {
+    const k = respCache.keys().next().value;
+    const v = respCache.get(k);
+    if (v && v.file) {
+      try {
+        fsSync.unlinkSync(v.file);
+      } catch {
+        /* already gone */
+      }
+    }
+    respCache.delete(k);
+  }
   return id;
 }
+
+app.on('will-quit', () => {
+  for (const v of respCache.values()) {
+    if (v && v.file) {
+      try {
+        fsSync.unlinkSync(v.file);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+});
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -69,9 +108,40 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
-app.whenReady().then(createWindow);
+function initAutoUpdate() {
+  if (!app.isPackaged) return;
+  try {
+    const { autoUpdater } = require('electron-updater');
+    autoUpdater.autoDownload = true;
+    autoUpdater.on('update-downloaded', async (info) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      const r = await dialog.showMessageBox(win, {
+        type: 'info',
+        message: `Lostman ${info.version} has been downloaded.`,
+        detail: 'Restart the app to apply the update.',
+        buttons: ['Restart Now', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (r.response === 0) autoUpdater.quitAndInstall();
+    });
+    autoUpdater.checkForUpdates().catch(() => {});
+  } catch {
+    /* updater unavailable (e.g. portable build) */
+  }
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  initAutoUpdate();
+});
 
 app.on('window-all-closed', () => app.quit());
+
+ipcMain.handle('app:newWindow', () => {
+  createWindow();
+  return true;
+});
 
 /* ---------------- store ---------------- */
 
@@ -83,13 +153,45 @@ ipcMain.handle('store:load', async () => {
   }
 });
 
-ipcMain.handle('store:save', async (_e, data) => {
+ipcMain.handle('store:save', async (e, data) => {
   const file = dataFile();
   const tmp = file + '.tmp';
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(tmp, JSON.stringify(data));
   await fs.rename(tmp, file);
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed() && w.webContents !== e.sender) w.webContents.send('store:changed', data);
+  }
   return true;
+});
+
+ipcMain.handle('store:info', () => {
+  const loc = dataLocations();
+  let portableAvailable = true;
+  try {
+    fsSync.accessSync(loc.portableDir, fsSync.constants.W_OK);
+  } catch {
+    portableAvailable = false;
+  }
+  return { path: dataFile(), portable: loc.portable, portableAvailable, portableDir: loc.portableDir };
+});
+
+ipcMain.handle('store:setPortable', async (_e, on) => {
+  const loc = dataLocations();
+  try {
+    if (on && !loc.portable) {
+      const current = fsSync.existsSync(loc.standardPath) ? loc.standardPath : null;
+      if (current) await fs.copyFile(current, loc.portablePath);
+      else await fs.writeFile(loc.portablePath, JSON.stringify({ version: 2 }));
+    } else if (!on && loc.portable) {
+      await fs.mkdir(path.dirname(loc.standardPath), { recursive: true });
+      await fs.copyFile(loc.portablePath, loc.standardPath);
+      await fs.unlink(loc.portablePath);
+    }
+    return { ok: true, path: dataFile() };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
 });
 
 /* ---------------- dialogs ---------------- */
@@ -104,8 +206,9 @@ ipcMain.handle('resp:save', async (e, { bufId, defaultName, fallbackText }) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   const r = await dialog.showSaveDialog(win, { defaultPath: defaultName || 'response' });
   if (r.canceled || !r.filePath) return false;
-  const buf = respCache.get(bufId);
-  await fs.writeFile(r.filePath, buf ?? Buffer.from(fallbackText ?? '', 'utf8'));
+  const entry = respCache.get(bufId);
+  if (entry && entry.file) await fs.copyFile(entry.file, r.filePath);
+  else await fs.writeFile(r.filePath, Buffer.isBuffer(entry) ? entry : Buffer.from(fallbackText ?? '', 'utf8'));
   return true;
 });
 
@@ -340,23 +443,99 @@ function headersToObj(list) {
   return o;
 }
 
-function decompress(buf, encoding) {
+/* ---------------- proxy & client certificates ---------------- */
+
+function parseProxyUrl(s) {
   try {
-    if (!encoding || !buf.length) return buf;
-    const enc = String(encoding).toLowerCase();
-    if (enc.includes('gzip')) return zlib.gunzipSync(buf);
-    if (enc.includes('deflate')) {
-      try { return zlib.inflateSync(buf); } catch { return zlib.inflateRawSync(buf); }
-    }
-    if (enc.includes('br')) return zlib.brotliDecompressSync(buf);
-    if (enc.includes('zstd') && zlib.zstdDecompressSync) return zlib.zstdDecompressSync(buf);
-    return buf;
+    const u = new URL(String(s).includes('://') ? s : 'http://' + s);
+    return {
+      host: u.hostname,
+      port: parseInt(u.port, 10) || 8080,
+      auth: u.username
+        ? 'Basic ' + Buffer.from(decodeURIComponent(u.username) + ':' + decodeURIComponent(u.password || '')).toString('base64')
+        : null,
+    };
   } catch {
-    return buf;
+    return null;
   }
 }
 
-function singleRequest(urlStr, method, headersObj, body, settings, cancel) {
+function hostInBypass(host, bypass) {
+  if (!bypass) return false;
+  const h = String(host).toLowerCase();
+  return String(bypass)
+    .split(',')
+    .map((s) => s.trim().toLowerCase().replace(/^\./, ''))
+    .filter(Boolean)
+    .some((b) => b === '*' || h === b || h.endsWith('.' + b));
+}
+
+async function resolveProxy(urlStr, proxyCfg) {
+  const cfg = proxyCfg || {};
+  if (!cfg.mode || cfg.mode === 'none') return null;
+  let u;
+  try {
+    u = new URL(urlStr);
+  } catch {
+    return null;
+  }
+  if (hostInBypass(u.hostname, cfg.bypass)) return null;
+  if (cfg.mode === 'manual' && cfg.url) return parseProxyUrl(cfg.url);
+  if (cfg.mode === 'system') {
+    try {
+      const { session } = require('electron');
+      const r = await session.defaultSession.resolveProxy(urlStr);
+      const m = r && r.match(/PROXY\s+([^:;\s]+):(\d+)/i);
+      if (m) return { host: m[1], port: parseInt(m[2], 10), auth: null };
+    } catch {
+      /* fall through to direct */
+    }
+  }
+  return null;
+}
+
+const certFileCache = new Map();
+function readFileCached(p) {
+  const st = fsSync.statSync(p);
+  const key = p + ':' + st.mtimeMs;
+  if (!certFileCache.has(key)) {
+    certFileCache.set(key, fsSync.readFileSync(p));
+    while (certFileCache.size > 16) certFileCache.delete(certFileCache.keys().next().value);
+  }
+  return certFileCache.get(key);
+}
+
+function certFor(hostname, certs) {
+  const hn = String(hostname).toLowerCase();
+  for (const c of certs || []) {
+    const h = String(c.host || '').toLowerCase().replace(/^\*\./, '').replace(/^\./, '');
+    if (h && (hn === h || hn.endsWith('.' + h))) return c;
+  }
+  return null;
+}
+
+function applyClientCert(options, hostname, settings) {
+  const cc = certFor(hostname, settings.clientCerts);
+  if (!cc) return null;
+  try {
+    if (cc.type === 'pfx' && cc.pfxPath) {
+      options.pfx = readFileCached(cc.pfxPath);
+    } else {
+      if (cc.certPath) options.cert = readFileCached(cc.certPath);
+      if (cc.keyPath) options.key = readFileCached(cc.keyPath);
+    }
+    if (cc.passphrase) options.passphrase = cc.passphrase;
+    return null;
+  } catch (err) {
+    return Object.assign(new Error(`Could not read the client certificate for ${cc.host}: ${err.message}`), {
+      code: 'ECLIENTCERT',
+    });
+  }
+}
+
+/* ---------------- request core ---------------- */
+
+function singleRequest(urlStr, method, headersObj, body, settings, cancel, proxy) {
   return new Promise((resolve, reject) => {
     let u;
     try {
@@ -364,56 +543,152 @@ function singleRequest(urlStr, method, headersObj, body, settings, cancel) {
     } catch {
       return reject(Object.assign(new Error('Invalid URL: ' + urlStr), { code: 'ERR_INVALID_URL' }));
     }
-    const mod = u.protocol === 'https:' ? https : u.protocol === 'http:' ? http : null;
-    if (!mod) return reject(new Error('Unsupported protocol: ' + u.protocol));
+    const isHttps = u.protocol === 'https:';
+    if (!isHttps && u.protocol !== 'http:') return reject(new Error('Unsupported protocol: ' + u.protocol));
 
     const hdrs = { ...headersObj };
     if (body && !('content-length' in hdrs)) hdrs['content-length'] = body.length;
 
     const options = { method, headers: hdrs, agent: false };
-    if (u.protocol === 'https:' && settings.verifySsl === false) options.rejectUnauthorized = false;
+    if (isHttps && settings.verifySsl === false) options.rejectUnauthorized = false;
+    if (isHttps) {
+      const certErr = applyClientCert(options, u.hostname, settings);
+      if (certErr) return reject(certErr);
+    }
 
     let timer = null;
-    const reqObj = mod.request(u, options, (res) => {
+    let reqRef = null;
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      reject(err);
+    };
+
+    const onResponse = (res) => {
+      const enc = String(res.headers['content-encoding'] || '').toLowerCase();
+      let stream = res;
+      if (enc.includes('gzip') || enc.includes('deflate')) {
+        stream = res.pipe(zlib.createUnzip());
+      } else if (enc.includes('br')) {
+        stream = res.pipe(zlib.createBrotliDecompress());
+      } else if (enc.includes('zstd') && zlib.createZstdDecompress) {
+        stream = res.pipe(zlib.createZstdDecompress());
+      }
+
       const chunks = [];
+      let memBytes = 0;
       let total = 0;
-      res.on('data', (c) => {
+      let fileStream = null;
+      let tmpPath = null;
+
+      stream.on('data', (c) => {
         total += c.length;
         if (total > MAX_BODY_BYTES) {
-          reqObj.destroy(Object.assign(new Error('Response exceeded the 50 MB limit'), { code: 'ETOOBIG' }));
+          if (reqRef) reqRef.destroy(Object.assign(new Error('Response exceeded the 500 MB limit'), { code: 'ETOOBIG' }));
           return;
         }
-        chunks.push(c);
+        if (memBytes < STREAM_THRESHOLD) {
+          chunks.push(c);
+          memBytes += c.length;
+        } else {
+          if (!fileStream) {
+            tmpPath = path.join(os.tmpdir(), 'lostman-resp-' + crypto.randomBytes(6).toString('hex') + '.bin');
+            fileStream = fsSync.createWriteStream(tmpPath);
+            for (const ch of chunks) fileStream.write(ch);
+          }
+          fileStream.write(c);
+        }
       });
-      res.on('end', () => {
+      const finish = () => {
+        if (settled) return;
+        settled = true;
         if (timer) clearTimeout(timer);
         resolve({
           statusCode: res.statusCode,
           statusMessage: res.statusMessage,
           rawHeaders: res.rawHeaders,
           headers: res.headers,
-          buffer: decompress(Buffer.concat(chunks), res.headers['content-encoding']),
+          buffer: Buffer.concat(chunks),
+          totalSize: total,
+          tmpFile: tmpPath,
         });
+      };
+      stream.on('end', () => {
+        if (fileStream) fileStream.end(finish);
+        else finish();
       });
-    });
+      const onStreamError = (err) => {
+        if (fileStream) {
+          try {
+            fileStream.destroy();
+            fsSync.unlinkSync(tmpPath);
+          } catch {
+            /* best effort */
+          }
+        }
+        fail(err);
+      };
+      stream.on('error', onStreamError);
+      if (stream !== res) res.on('error', onStreamError);
+    };
 
-    cancel.destroy = () => reqObj.destroy(Object.assign(new Error('Request cancelled'), { code: 'ABORTED' }));
-    if (cancel.aborted) cancel.destroy();
+    const fire = (reqObj) => {
+      reqRef = reqObj;
+      cancel.destroy = () => reqObj.destroy(Object.assign(new Error('Request cancelled'), { code: 'ABORTED' }));
+      if (cancel.aborted) cancel.destroy();
+      const t = Number(settings.timeoutMs) || 0;
+      if (t > 0) {
+        timer = setTimeout(() => {
+          reqObj.destroy(Object.assign(new Error(`Request timed out after ${t} ms`), { code: 'ETIMEDOUT' }));
+        }, t);
+      }
+      reqObj.on('error', fail);
+      if (body) reqObj.end(body);
+      else reqObj.end();
+    };
 
-    const t = Number(settings.timeoutMs) || 0;
-    if (t > 0) {
-      timer = setTimeout(() => {
-        reqObj.destroy(Object.assign(new Error(`Request timed out after ${t} ms`), { code: 'ETIMEDOUT' }));
-      }, t);
+    if (proxy && !isHttps) {
+      fire(
+        http.request(
+          {
+            host: proxy.host,
+            port: proxy.port,
+            method,
+            path: u.href,
+            agent: false,
+            headers: { ...hdrs, host: u.host, ...(proxy.auth ? { 'proxy-authorization': proxy.auth } : {}) },
+          },
+          onResponse
+        )
+      );
+    } else if (proxy && isHttps) {
+      const targetPort = u.port || 443;
+      const creq = http.request({
+        host: proxy.host,
+        port: proxy.port,
+        method: 'CONNECT',
+        path: `${u.hostname}:${targetPort}`,
+        headers: { host: `${u.hostname}:${targetPort}`, ...(proxy.auth ? { 'proxy-authorization': proxy.auth } : {}) },
+      });
+      creq.on('connect', (cres, socket) => {
+        if (cres.statusCode !== 200) {
+          socket.destroy();
+          return fail(new Error(`Proxy CONNECT failed: HTTP ${cres.statusCode}`));
+        }
+        const tlsOpts = { socket, servername: u.hostname };
+        if (settings.verifySsl === false) tlsOpts.rejectUnauthorized = false;
+        for (const k of ['pfx', 'cert', 'key', 'passphrase']) if (options[k]) tlsOpts[k] = options[k];
+        delete options.agent;
+        options.createConnection = () => tls.connect(tlsOpts);
+        fire(https.request(u, options, onResponse));
+      });
+      creq.on('error', fail);
+      creq.end();
+    } else {
+      fire((isHttps ? https : http).request(u, options, onResponse));
     }
-
-    reqObj.on('error', (err) => {
-      if (timer) clearTimeout(timer);
-      reject(err);
-    });
-
-    if (body) reqObj.end(body);
-    else reqObj.end();
   });
 }
 
@@ -425,11 +700,19 @@ async function requestWithRedirects(urlStr, method, headersObj, body, settings, 
   let redirects = 0;
 
   for (;;) {
-    const res = await singleRequest(currentUrl, currentMethod, hdrs, currentBody, settings, cancel);
+    const proxy = await resolveProxy(currentUrl, settings.proxy);
+    const res = await singleRequest(currentUrl, currentMethod, hdrs, currentBody, settings, cancel, proxy);
     const loc = res.headers.location;
     const isRedirect = res.statusCode >= 300 && res.statusCode < 400 && loc;
     if (!isRedirect || settings.followRedirects === false || redirects >= MAX_REDIRECTS) {
       return { ...res, finalUrl: currentUrl, redirects };
+    }
+    if (res.tmpFile) {
+      try {
+        fsSync.unlinkSync(res.tmpFile);
+      } catch {
+        /* best effort */
+      }
     }
     redirects++;
     const nextUrl = new URL(loc, currentUrl).toString();
@@ -544,8 +827,10 @@ function friendlyError(err) {
     ETIMEDOUT: 'Connection timed out',
     EHOSTUNREACH: 'Host unreachable',
     ENETUNREACH: 'Network unreachable',
-    ETOOBIG: 'Response exceeded the 50 MB limit',
+    ETOOBIG: 'Response exceeded the 500 MB limit',
     ERR_INVALID_URL: 'Invalid URL',
+    ECLIENTCERT: 'Could not load the client certificate (check the file paths in Settings)',
+    'Z_DATA_ERROR': 'Failed to decompress the response (content-encoding mismatch)',
     ERR_INVALID_HTTP_TOKEN: 'A header name contains invalid characters',
     ERR_INVALID_CHAR: 'A header value contains invalid characters',
     CERT_HAS_EXPIRED: 'SSL certificate has expired',
@@ -586,7 +871,7 @@ ipcMain.handle('http:send', async (_e, req) => {
 
     if (!('accept' in headers)) headers['accept'] = '*/*';
     if (!('accept-encoding' in headers)) headers['accept-encoding'] = 'gzip, deflate, br';
-    if (!('user-agent' in headers)) headers['user-agent'] = 'Lostman/1.3';
+    if (!('user-agent' in headers)) headers['user-agent'] = 'Lostman/1.4';
 
     if (req.auth && req.auth.type === 'awsv4') signAwsV4(req, headers, body);
 
@@ -613,19 +898,24 @@ ipcMain.handle('http:send', async (_e, req) => {
     }
 
     const buf = res.buffer;
+    const fullSize = res.totalSize ?? buf.length;
     const contentType = String(res.headers['content-type'] || '');
     const isImage = /^image\//i.test(contentType) && !/svg/i.test(contentType);
 
     let bodyText = null;
     let bodyBase64 = null;
     let truncated = false;
-    if (isImage) {
+    if (isImage && !res.tmpFile) {
       bodyBase64 = buf.toString('base64');
+    } else if (isImage && res.tmpFile) {
+      bodyText = `[large binary ${contentType} response — use Save to write it to a file]`;
+      truncated = true;
     } else if (buf.length > MAX_TEXT_BYTES) {
       bodyText = buf.toString('utf8', 0, MAX_TEXT_BYTES);
       truncated = true;
     } else {
       bodyText = buf.toString('utf8');
+      truncated = fullSize > buf.length;
     }
 
     const headerPairs = [];
@@ -639,12 +929,12 @@ ipcMain.handle('http:send', async (_e, req) => {
       redirects: res.redirects,
       headers: headerPairs,
       timeMs: Date.now() - started,
-      size: buf.length,
+      size: fullSize,
       contentType,
       bodyText,
       bodyBase64,
       truncated,
-      bufId: cacheResponse(buf),
+      bufId: cacheResponse(res.tmpFile ? { file: res.tmpFile } : buf),
     };
   } catch (err) {
     return {

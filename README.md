@@ -5,10 +5,19 @@
   </picture>
 </p>
 
+<p align="center">
+  <a href="https://github.com/AliHammoud995/lostman/releases/latest"><img src="https://img.shields.io/github/v/release/AliHammoud995/lostman?label=download&color=f0dc92" alt="Latest release"></a>
+  <a href="https://github.com/AliHammoud995/lostman/actions/workflows/ci.yml"><img src="https://github.com/AliHammoud995/lostman/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/github/downloads/AliHammoud995/lostman/total" alt="Downloads">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-4a9cf5" alt="Windows and Linux">
+</p>
+
 # Lostman
 
-A free, offline Postman-style API client for **Windows and Linux**. No login, no account,
-no cloud sync — everything is stored locally on your machine.
+A **free, offline Postman alternative** — a REST, GraphQL, WebSocket & SSE API client
+for **Windows and Linux**. No login, no account, no cloud sync — everything is stored
+locally on your machine.
 
 ## Features
 
@@ -46,6 +55,17 @@ no cloud sync — everything is stored locally on your machine.
   the request.
 - **Settings** — light/dark theme, request timeout, follow-redirects toggle, and an SSL
   verification toggle for local servers with self-signed certificates.
+- **Proxy & mTLS** — no proxy / system proxy / manual proxy with auth and a bypass list;
+  per-hostname client certificates (PFX or PEM) for mutual TLS.
+- **Large responses** — bodies stream to disk up to 500 MB with a fast 2 MB preview;
+  Save always writes the exact full bytes.
+- **Command palette** — `Ctrl+K` fuzzy-jumps to any saved request, open tab, or action.
+- **Multi-window** — `Ctrl+Shift+N` opens another window; collections and environments
+  stay in sync between windows.
+- **Auto-updates** — installed builds check GitHub Releases on startup and offer a
+  one-click restart when a new version is ready.
+- **Portable mode** — flip a switch in Settings to keep all data next to the app
+  (great on USB sticks); Lostman auto-detects it on launch.
 - **Import anything** — Postman collections (v2.x) and environments, OpenAPI 3 / Swagger 2
   specs (JSON), pasted cURL commands, and Lostman backups — all from the sidebar's
   Import button.
@@ -64,8 +84,10 @@ no cloud sync — everything is stored locally on your machine.
 | `Ctrl+S` | Save request to a collection |
 | `Ctrl+Shift+S` | Save request as a copy |
 | `Ctrl+F` | Find in response body |
+| `Ctrl+K` | Command palette |
 | `Ctrl+T` | New request tab |
 | `Ctrl+W` | Close current tab |
+| `Ctrl+Shift+N` | New window |
 | `F12` | Toggle DevTools |
 
 ## Run from source
@@ -104,6 +126,7 @@ Delete that file to reset the app. Copy it to another machine to move your data.
 
 ## Notes
 
-- Response bodies over 2 MB are truncated in the viewer; **Save** still writes the complete body.
-- Responses are capped at 50 MB.
+- Response bodies over 2 MB are truncated in the viewer; **Save** still writes the complete
+  body (large bodies stream to disk, capped at 500 MB).
+- Run the test suite with `npm test` and the linter with `npm run lint`.
 - See [ROADMAP.md](ROADMAP.md) for what's planned next.

@@ -14,4 +14,8 @@ contextBridge.exposeInMainWorld('lostman', {
   streamSend: (opts) => ipcRenderer.invoke('stream:send', opts),
   streamClose: (opts) => ipcRenderer.invoke('stream:close', opts),
   onStreamEvent: (cb) => ipcRenderer.on('stream:event', (_e, data) => cb(data)),
+  newWindow: () => ipcRenderer.invoke('app:newWindow'),
+  storeInfo: () => ipcRenderer.invoke('store:info'),
+  setPortable: (on) => ipcRenderer.invoke('store:setPortable', on),
+  onStoreChanged: (cb) => ipcRenderer.on('store:changed', (_e, data) => cb(data)),
 });
