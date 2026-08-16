@@ -44,6 +44,8 @@ function timeAgo(ts) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+const basename = (p) => String(p).split(/[\\/]/).pop();
+
 function toast(msg) {
   const t = el('div', 'toast', msg);
   $('#toastRoot').append(t);
@@ -54,10 +56,43 @@ function toast(msg) {
   }, 2200);
 }
 
+function splitUrl(url) {
+  const i = String(url).indexOf('?');
+  return i === -1 ? [String(url), ''] : [String(url).slice(0, i), String(url).slice(i + 1)];
+}
+
+function safeDecode(s) {
+  try {
+    return decodeURIComponent(String(s).replace(/\+/g, ' '));
+  } catch {
+    return String(s);
+  }
+}
+
+// Encode for the URL bar but keep {{variables}} readable.
+function prettyEncode(s) {
+  return encodeURIComponent(String(s)).replace(/%7B/gi, '{').replace(/%7D/gi, '}');
+}
+
+function parseQuery(qs) {
+  const out = [];
+  if (!qs) return out;
+  for (const part of qs.split('&')) {
+    if (part === '') continue;
+    const eq = part.indexOf('=');
+    const k = eq === -1 ? part : part.slice(0, eq);
+    const v = eq === -1 ? '' : part.slice(eq + 1);
+    out.push({ key: safeDecode(k), value: safeDecode(v) });
+  }
+  return out;
+}
+
 /* ============================== state ============================== */
 
 const METHOD_SHORT = { DELETE: 'DEL', OPTIONS: 'OPT' };
 const shortMethod = (m) => METHOD_SHORT[m] || m;
+
+const DEFAULT_SETTINGS = { theme: 'dark', timeoutMs: 0, followRedirects: true, verifySsl: true };
 
 function blankRequest() {
   return {
@@ -73,13 +108,31 @@ function blankRequest() {
   };
 }
 
+function newKvRow() {
+  return { id: uid(), key: '', value: '', enabled: true, type: 'text', filePath: '' };
+}
+
 function normalizeRequest(r) {
   const base = blankRequest();
   const out = { ...base, ...(r || {}) };
   out.auth = { ...base.auth, ...((r && r.auth) || {}) };
   for (const k of ['params', 'headers', 'formItems']) {
     if (!Array.isArray(out[k])) out[k] = [];
-    out[k] = out[k].map((row) => ({ id: row.id || uid(), key: row.key || '', value: row.value || '', enabled: row.enabled !== false }));
+    out[k] = out[k].map((row) => ({
+      id: row.id || uid(),
+      key: row.key || '',
+      value: row.value || '',
+      enabled: row.enabled !== false,
+      type: row.type === 'file' ? 'file' : 'text',
+      filePath: row.filePath || '',
+    }));
+  }
+  // Merge any query pairs embedded in the URL into the params table (pre-sync data).
+  const [, qs] = splitUrl(out.url || '');
+  for (const pair of parseQuery(qs)) {
+    if (!out.params.some((p) => p.key === pair.key && p.value === pair.value)) {
+      out.params.push({ ...newKvRow(), key: pair.key, value: pair.value });
+    }
   }
   return out;
 }
@@ -94,6 +147,7 @@ function makeTab(request, name, savedRef) {
     sending: null,
     respTab: 'body',
     respView: 'pretty',
+    search: null,
   };
 }
 
@@ -105,6 +159,8 @@ const state = {
   environments: [],
   activeEnvId: null,
   sideView: 'collections',
+  sideFilter: '',
+  settings: { ...DEFAULT_SETTINGS },
 };
 
 const activeTab = () => state.tabs.find((t) => t.id === state.activeTabId);
@@ -113,13 +169,14 @@ const activeTab = () => state.tabs.find((t) => t.id === state.activeTabId);
 
 function snapshot() {
   return {
-    version: 1,
+    version: 2,
     activeTabId: state.activeTabId,
     tabs: state.tabs.map((t) => ({ id: t.id, name: t.name, savedRef: t.savedRef, request: t.request })),
     collections: state.collections,
     history: state.history,
     environments: state.environments,
     activeEnvId: state.activeEnvId,
+    settings: state.settings,
   };
 }
 
@@ -154,22 +211,93 @@ function renderEnvSelect() {
   sel.value = state.environments.some((e) => e.id === state.activeEnvId) ? state.activeEnvId : '';
 }
 
+/* ============================== theme & settings ============================== */
+
+function applyTheme() {
+  document.body.classList.toggle('light', state.settings.theme === 'light');
+}
+
+function openSettings() {
+  const s = state.settings;
+  const body = el('div');
+
+  const fTheme = el('div', 'form-field');
+  fTheme.append(el('label', null, 'Theme'));
+  const themeSel = document.createElement('select');
+  for (const [v, label] of [['dark', 'Dark'], ['light', 'Light']]) {
+    const o = el('option', null, label);
+    o.value = v;
+    themeSel.append(o);
+  }
+  themeSel.value = s.theme;
+  fTheme.append(themeSel);
+
+  const fTimeout = el('div', 'form-field');
+  fTimeout.append(el('label', null, 'Request timeout (milliseconds, 0 = no timeout)'));
+  const timeoutInput = document.createElement('input');
+  timeoutInput.type = 'number';
+  timeoutInput.min = '0';
+  timeoutInput.step = '500';
+  timeoutInput.value = String(s.timeoutMs);
+  fTimeout.append(timeoutInput);
+
+  const cRedir = el('label', 'form-check');
+  const redirCb = document.createElement('input');
+  redirCb.type = 'checkbox';
+  redirCb.checked = s.followRedirects !== false;
+  cRedir.append(redirCb, el('span', null, 'Follow redirects automatically'));
+
+  const cSsl = el('label', 'form-check');
+  const sslCb = document.createElement('input');
+  sslCb.type = 'checkbox';
+  sslCb.checked = s.verifySsl !== false;
+  cSsl.append(sslCb, el('span', null, 'Verify SSL certificates'));
+  const sslNote = el('div', 'form-note', 'Turn off only for local servers with self-signed certificates.');
+
+  body.append(fTheme, fTimeout, cRedir, cSsl, sslNote);
+
+  modal('Settings', body, [
+    { label: 'Cancel' },
+    {
+      label: 'Save',
+      primary: true,
+      onClick: () => {
+        state.settings = {
+          theme: themeSel.value === 'light' ? 'light' : 'dark',
+          timeoutMs: Math.max(0, parseInt(timeoutInput.value, 10) || 0),
+          followRedirects: redirCb.checked,
+          verifySsl: sslCb.checked,
+        };
+        applyTheme();
+        persist();
+        toast('Settings saved');
+      },
+    },
+  ]);
+}
+
 /* ============================== key-value tables ============================== */
 
-function newKvRow() {
-  return { id: uid(), key: '', value: '', enabled: true };
-}
-
-function renderKv(container, rowsRef, onChange) {
+function renderKv(container, rowsRef, onChange, opts = {}) {
+  container.classList.toggle('kv-file', !!opts.file);
   const rows = rowsRef();
   const last = rows[rows.length - 1];
-  if (!rows.length || (last && (last.key !== '' || last.value !== ''))) rows.push(newKvRow());
+  if (!rows.length || (last && (last.key !== '' || last.value !== '' || last.filePath))) rows.push(newKvRow());
   container.innerHTML = '';
-  for (const row of rowsRef()) container.appendChild(kvRowEl(container, rowsRef, row, onChange));
+  for (const row of rowsRef()) container.appendChild(kvRowEl(container, rowsRef, row, onChange, opts));
 }
 
-function kvRowEl(container, rowsRef, row, onChange) {
+function kvRowEl(container, rowsRef, row, onChange, opts = {}) {
   const div = el('div', 'kv-row');
+
+  const grow = () => {
+    const rows = rowsRef();
+    if (rows[rows.length - 1] === row && (row.key !== '' || row.value !== '' || row.filePath)) {
+      const nr = newKvRow();
+      rows.push(nr);
+      container.appendChild(kvRowEl(container, rowsRef, nr, onChange, opts));
+    }
+  };
 
   const cb = document.createElement('input');
   cb.type = 'checkbox';
@@ -188,16 +316,47 @@ function kvRowEl(container, rowsRef, row, onChange) {
     i.value = row[prop];
     i.addEventListener('input', () => {
       row[prop] = i.value;
-      const rows = rowsRef();
-      if (rows[rows.length - 1] === row && (row.key !== '' || row.value !== '')) {
-        const nr = newKvRow();
-        rows.push(nr);
-        container.appendChild(kvRowEl(container, rowsRef, nr, onChange));
-      }
+      grow();
       onChange();
     });
     return i;
   };
+
+  const cells = [cb, mkInput('key', 'Key')];
+
+  if (opts.file) {
+    const typeSel = document.createElement('select');
+    for (const [v, label] of [['text', 'Text'], ['file', 'File']]) {
+      const o = el('option', null, label);
+      o.value = v;
+      typeSel.append(o);
+    }
+    typeSel.value = row.type === 'file' ? 'file' : 'text';
+    typeSel.addEventListener('change', () => {
+      row.type = typeSel.value;
+      renderKv(container, rowsRef, onChange, opts);
+      onChange();
+    });
+    cells.push(typeSel);
+  }
+
+  if (opts.file && row.type === 'file') {
+    const btn = el('button', 'kv-file-btn', row.filePath ? basename(row.filePath) : 'Choose file…');
+    btn.title = row.filePath || 'Choose a file';
+    btn.addEventListener('click', async () => {
+      const p = await window.lostman.pickFile();
+      if (p) {
+        row.filePath = p;
+        btn.textContent = basename(p);
+        btn.title = p;
+        grow();
+        onChange();
+      }
+    });
+    cells.push(btn);
+  } else {
+    cells.push(mkInput('value', 'Value'));
+  }
 
   const del = el('button', 'kv-del', '✕');
   del.title = 'Remove row';
@@ -206,15 +365,16 @@ function kvRowEl(container, rowsRef, row, onChange) {
     const rows = rowsRef();
     const idx = rows.indexOf(row);
     if (idx > -1) rows.splice(idx, 1);
-    renderKv(container, rowsRef, onChange);
+    renderKv(container, rowsRef, onChange, opts);
     onChange();
   });
+  cells.push(del);
 
-  div.append(cb, mkInput('key', 'Key'), mkInput('value', 'Value'), del);
+  div.append(...cells);
   return div;
 }
 
-const cleanRows = (rows) => rows.filter((r) => r.key.trim() !== '' || r.value.trim() !== '');
+const cleanRows = (rows) => rows.filter((r) => r.key.trim() !== '' || r.value.trim() !== '' || r.filePath);
 
 function cleanRequest(r) {
   const out = structuredClone(r);
@@ -222,6 +382,33 @@ function cleanRequest(r) {
   out.headers = cleanRows(out.headers);
   out.formItems = cleanRows(out.formItems);
   return out;
+}
+
+/* ============================== URL <-> params sync ============================== */
+
+function syncParamsFromUrl() {
+  const r = activeTab().request;
+  const [, qs] = splitUrl(r.url);
+  const disabled = r.params.filter((p) => p.enabled === false && (p.key !== '' || p.value !== ''));
+  r.params = parseQuery(qs).map((pair) => ({ ...newKvRow(), key: pair.key, value: pair.value }));
+  r.params.push(...disabled);
+  renderKv($('#kvParams'), () => activeTab().request.params, paramsChanged);
+}
+
+function syncUrlFromParams() {
+  const r = activeTab().request;
+  const [base] = splitUrl(r.url);
+  const enabled = r.params.filter((p) => p.enabled !== false && p.key.trim() !== '');
+  const qs = enabled.map((p) => prettyEncode(p.key) + '=' + prettyEncode(p.value)).join('&');
+  r.url = qs ? `${base}?${qs}` : base;
+  $('#url').value = r.url;
+}
+
+function paramsChanged() {
+  syncUrlFromParams();
+  updateEditorMeta();
+  renderTabsBar();
+  persist();
 }
 
 /* ============================== request editor ============================== */
@@ -236,6 +423,8 @@ function initEditor() {
 
   $('#url').addEventListener('input', (e) => {
     activeTab().request.url = e.target.value;
+    syncParamsFromUrl();
+    updateEditorMeta();
     renderTabsBar();
     persist();
   });
@@ -319,9 +508,9 @@ function loadEditor() {
     updateEditorMeta();
     persist();
   };
-  renderKv($('#kvParams'), () => activeTab().request.params, kvChanged);
+  renderKv($('#kvParams'), () => activeTab().request.params, paramsChanged);
   renderKv($('#kvHeaders'), () => activeTab().request.headers, kvChanged);
-  renderKv($('#kvForm'), () => activeTab().request.formItems, kvChanged);
+  renderKv($('#kvForm'), () => activeTab().request.formItems, kvChanged, { file: true });
 
   const radio = document.querySelector(`input[name="bodyMode"][value="${r.bodyMode}"]`);
   if (radio) radio.checked = true;
@@ -375,15 +564,14 @@ function updateEditorMeta() {
 
 function buildPayload(tab) {
   const r = tab.request;
-  let url = applyEnv(r.url.trim());
+  const [rawBase] = splitUrl(r.url.trim());
+  let url = applyEnv(rawBase.trim());
   if (!url) return null;
   if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
 
   const qp = r.params.filter((p) => p.enabled !== false && p.key.trim() !== '');
   if (qp.length) {
-    const hasQ = url.includes('?');
-    const sep = !hasQ ? '?' : url.endsWith('?') || url.endsWith('&') ? '' : '&';
-    url += sep + qp.map((p) => encodeURIComponent(applyEnv(p.key)) + '=' + encodeURIComponent(applyEnv(p.value))).join('&');
+    url += '?' + qp.map((p) => encodeURIComponent(applyEnv(p.key)) + '=' + encodeURIComponent(applyEnv(p.value))).join('&');
   }
 
   const headers = r.headers
@@ -422,10 +610,28 @@ function buildPayload(tab) {
   } else if (bodyMode === 'urlencoded' || bodyMode === 'formdata') {
     formItems = r.formItems
       .filter((f) => f.enabled !== false && f.key.trim() !== '')
-      .map((f) => ({ key: applyEnv(f.key), value: applyEnv(f.value) }));
+      .map((f) => ({
+        key: applyEnv(f.key),
+        value: applyEnv(f.value),
+        type: f.type === 'file' ? 'file' : 'text',
+        filePath: f.filePath || '',
+      }));
+    if (bodyMode === 'urlencoded') formItems = formItems.filter((f) => f.type !== 'file');
   }
 
-  return { method: r.method, url, headers, bodyMode, rawBody, formItems };
+  return {
+    method: r.method,
+    url,
+    headers,
+    bodyMode,
+    rawBody,
+    formItems,
+    settings: {
+      timeoutMs: state.settings.timeoutMs,
+      followRedirects: state.settings.followRedirects,
+      verifySsl: state.settings.verifySsl,
+    },
+  };
 }
 
 async function sendActive() {
@@ -467,8 +673,14 @@ function copyCurl() {
   parts.push(sq(payload.url));
   for (const h of payload.headers) parts.push('-H', sq(h.key + ': ' + h.value));
   if (payload.bodyMode === 'raw' && payload.rawBody) parts.push('--data-raw', sq(payload.rawBody));
-  if (payload.bodyMode === 'urlencoded') for (const f of payload.formItems) parts.push('--data-urlencode', sq(f.key + '=' + f.value));
-  if (payload.bodyMode === 'formdata') for (const f of payload.formItems) parts.push('-F', sq(f.key + '=' + f.value));
+  if (payload.bodyMode === 'urlencoded') {
+    for (const f of payload.formItems) parts.push('--data-urlencode', sq(f.key + '=' + f.value));
+  }
+  if (payload.bodyMode === 'formdata') {
+    for (const f of payload.formItems) {
+      parts.push('-F', sq(f.type === 'file' ? `${f.key}=@${f.filePath}` : `${f.key}=${f.value}`));
+    }
+  }
   navigator.clipboard.writeText(parts.join(' '));
   toast('cURL command copied to clipboard');
 }
@@ -485,21 +697,20 @@ function statusClass(s) {
 
 const EMPTY_STATE = `
   <div class="resp-empty">
-    <svg viewBox="0 0 24 24" width="54" height="54">
-      <circle cx="12" cy="12" r="10" fill="none" stroke="#9a9aa2" stroke-width="1.5"/>
-      <polygon points="12,5 14.2,12 12,19 9.8,12" fill="#9a9aa2"/>
-    </svg>
+    <img class="empty-logo" src="assets/logo-badge.png" alt="Lostman">
     <div>Enter a URL and click <b>Send</b> to get a response</div>
-    <div style="font-size:11.5px">Ctrl+Enter sends &nbsp;&middot;&nbsp; Ctrl+S saves &nbsp;&middot;&nbsp; Ctrl+T new tab</div>
+    <div style="font-size:11.5px">Ctrl+Enter sends &nbsp;&middot;&nbsp; Ctrl+S saves &nbsp;&middot;&nbsp; Ctrl+T new tab &nbsp;&middot;&nbsp; Ctrl+F finds</div>
   </div>`;
 
 function renderResponse() {
   const tab = activeTab();
   const box = $('#respContent');
   const toolbar = $('#respToolbar');
+  const searchBar = $('#respSearchBar');
 
   if (tab.sending) {
     toolbar.classList.add('hidden');
+    searchBar.classList.add('hidden');
     box.innerHTML = '';
     const wrap = el('div', 'resp-loading');
     wrap.append(el('div', 'spinner'));
@@ -514,12 +725,14 @@ function renderResponse() {
   const r = tab.response;
   if (!r) {
     toolbar.classList.add('hidden');
+    searchBar.classList.add('hidden');
     box.innerHTML = EMPTY_STATE;
     return;
   }
 
   if (!r.ok) {
     toolbar.classList.add('hidden');
+    searchBar.classList.add('hidden');
     box.innerHTML = `
       <div class="resp-error">
         <h3>${r.aborted ? 'Request cancelled' : 'Could not send request'}</h3>
@@ -545,8 +758,17 @@ function renderResponse() {
   $$('.resp-views button').forEach((b) => b.classList.toggle('active', b.dataset.rview === tab.respView));
   $('#respViews').classList.toggle('hidden', tab.respTab !== 'body');
 
+  const searchOn = !!tab.search && tab.respTab === 'body' && !r.bodyBase64;
+  searchBar.classList.toggle('hidden', !searchOn);
+  if (searchOn) {
+    const inp = $('#respSearchInput');
+    if (inp.value !== tab.search.q) inp.value = tab.search.q;
+    if (tab.search.q === '') $('#respSearchCount').textContent = '';
+  }
+
   box.innerHTML = '';
   if (tab.respTab === 'headers') renderRespHeaders(box, r);
+  else if (searchOn && tab.search.q !== '') renderSearchView(box, r, tab.search);
   else renderRespBody(box, r, tab.respView);
 }
 
@@ -622,8 +844,145 @@ function renderRespBody(box, r, view) {
   box.append(pre);
 
   if (r.truncated) {
-    box.append(el('div', 'trunc-note', `Response is ${formatBytes(r.size)} — showing the first 2 MB only.`));
+    box.append(el('div', 'trunc-note', `Response is ${formatBytes(r.size)} — showing the first 2 MB (Save exports the full body).`));
   }
+}
+
+/* ============================== response search ============================== */
+
+function renderSearchView(box, r, search) {
+  const text = r.bodyText ?? '';
+  const q = search.q;
+  const lower = text.toLowerCase();
+  const ql = q.toLowerCase();
+  const matches = [];
+  let i = lower.indexOf(ql);
+  while (i !== -1 && matches.length < 3000) {
+    matches.push(i);
+    i = lower.indexOf(ql, i + ql.length);
+  }
+  const n = matches.length;
+  if (search.cur >= n) search.cur = 0;
+  if (search.cur < 0) search.cur = Math.max(0, n - 1);
+  $('#respSearchCount').textContent = n ? `${search.cur + 1} of ${n}${n === 3000 ? '+' : ''}` : 'No matches';
+
+  const pre = el('pre', 'code');
+  if (!n) {
+    pre.textContent = text;
+    box.append(pre);
+    return;
+  }
+  const parts = [];
+  let prev = 0;
+  matches.forEach((idx, k) => {
+    parts.push(esc(text.slice(prev, idx)));
+    parts.push(`<mark${k === search.cur ? ' class="cur"' : ''}>${esc(text.slice(idx, idx + q.length))}</mark>`);
+    prev = idx + q.length;
+  });
+  parts.push(esc(text.slice(prev)));
+  pre.innerHTML = parts.join('');
+  box.append(pre);
+  const curEl = pre.querySelector('mark.cur');
+  if (curEl) curEl.scrollIntoView({ block: 'center' });
+}
+
+function openRespSearch() {
+  const tab = activeTab();
+  const r = tab.response;
+  if (!r || !r.ok || r.bodyBase64) return;
+  tab.respTab = 'body';
+  if (!tab.search) tab.search = { q: '', cur: 0 };
+  renderResponse();
+  const inp = $('#respSearchInput');
+  inp.focus();
+  inp.select();
+}
+
+function closeRespSearch() {
+  const tab = activeTab();
+  if (tab && tab.search) {
+    tab.search = null;
+    renderResponse();
+  }
+}
+
+function initRespSearch() {
+  $('#btnFindResp').addEventListener('click', openRespSearch);
+  const inp = $('#respSearchInput');
+  inp.addEventListener('input', () => {
+    const tab = activeTab();
+    if (!tab.search) return;
+    tab.search.q = inp.value;
+    tab.search.cur = 0;
+    renderResponse();
+  });
+  inp.addEventListener('keydown', (e) => {
+    const tab = activeTab();
+    if (!tab.search) return;
+    if (e.key === 'Enter') {
+      tab.search.cur += e.shiftKey ? -1 : 1;
+      renderResponse();
+    } else if (e.key === 'Escape') {
+      closeRespSearch();
+    }
+  });
+  $('#btnSearchNext').addEventListener('click', () => {
+    const tab = activeTab();
+    if (tab.search) {
+      tab.search.cur += 1;
+      renderResponse();
+    }
+  });
+  $('#btnSearchPrev').addEventListener('click', () => {
+    const tab = activeTab();
+    if (tab.search) {
+      tab.search.cur -= 1;
+      renderResponse();
+    }
+  });
+  $('#btnSearchClose').addEventListener('click', closeRespSearch);
+}
+
+/* ============================== save / copy response ============================== */
+
+function suggestFilename(r) {
+  let name = 'response';
+  try {
+    const u = new URL(r.finalUrl);
+    const seg = u.pathname.split('/').filter(Boolean).pop();
+    if (seg) name = seg;
+  } catch {
+    /* keep default */
+  }
+  if (!/\.[a-z0-9]{1,5}$/i.test(name)) {
+    const ct = (r.contentType || '').split(';')[0].trim().toLowerCase();
+    const extMap = {
+      'application/json': '.json', 'text/html': '.html', 'application/xml': '.xml', 'text/xml': '.xml',
+      'text/plain': '.txt', 'text/csv': '.csv', 'image/png': '.png', 'image/jpeg': '.jpg',
+      'image/gif': '.gif', 'image/webp': '.webp', 'image/svg+xml': '.svg', 'application/pdf': '.pdf',
+    };
+    name += extMap[ct] ?? '.txt';
+  }
+  return name;
+}
+
+function initRespActions() {
+  $('#btnCopyResp').addEventListener('click', () => {
+    const r = activeTab().response;
+    if (!r || !r.ok) return;
+    navigator.clipboard.writeText(r.bodyText ?? '');
+    toast('Response body copied');
+  });
+  $('#btnSaveResp').addEventListener('click', async () => {
+    const r = activeTab().response;
+    if (!r || !r.ok) return;
+    const ok = await window.lostman.saveResponse({
+      bufId: r.bufId,
+      defaultName: suggestFilename(r),
+      fallbackText: r.bodyText ?? '',
+    });
+    if (ok) toast('Response saved to file');
+  });
 }
 
 /* ============================== history ============================== */
@@ -641,6 +1000,59 @@ function addHistory(request, res) {
   if (state.sideView === 'history') renderSidebar();
 }
 
+/* ============================== collections model ============================== */
+
+function listFor(colId, folderId) {
+  const col = state.collections.find((c) => c.id === colId);
+  if (!col) return null;
+  if (folderId) {
+    const f = (col.folders || []).find((x) => x.id === folderId);
+    return f ? f.requests : null;
+  }
+  return col.requests;
+}
+
+function findSaved(ref) {
+  if (!ref) return null;
+  const col = state.collections.find((c) => c.id === ref.collectionId);
+  if (!col) return null;
+  const list = listFor(ref.collectionId, ref.folderId || null);
+  if (!list) return null;
+  const saved = list.find((q) => q.id === ref.requestId);
+  return saved ? { col, list, saved } : null;
+}
+
+function retargetTabs(reqId, ref) {
+  for (const t of state.tabs) {
+    if (t.savedRef && t.savedRef.requestId === reqId) t.savedRef = ref ? { ...ref } : null;
+  }
+}
+
+let dragInfo = null;
+
+function clearDragMarks() {
+  $$('.drag-over, .drag-over-top').forEach((n) => n.classList.remove('drag-over', 'drag-over-top'));
+}
+
+function moveSaved(from, to) {
+  const src = listFor(from.colId, from.folderId);
+  if (!src) return;
+  const idx = src.findIndex((q) => q.id === from.reqId);
+  if (idx === -1) return;
+  const [item] = src.splice(idx, 1);
+  const dst = listFor(to.colId, to.folderId);
+  if (!dst) {
+    src.splice(idx, 0, item);
+    return;
+  }
+  let at = to.beforeId ? dst.findIndex((q) => q.id === to.beforeId) : -1;
+  if (at === -1) at = dst.length;
+  dst.splice(at, 0, item);
+  retargetTabs(item.id, { collectionId: to.colId, folderId: to.folderId || null, requestId: item.id });
+  persist();
+  renderSidebar();
+}
+
 /* ============================== sidebar ============================== */
 
 function initSidebar() {
@@ -648,22 +1060,34 @@ function initSidebar() {
     b.addEventListener('click', () => {
       state.sideView = b.dataset.sideview;
       $$('.side-tabs button').forEach((x) => x.classList.toggle('active', x === b));
+      $('#sideSearch').placeholder = state.sideView === 'collections' ? 'Filter collections…' : 'Filter history…';
       renderSidebar();
     })
   );
+  $('#sideSearch').addEventListener('input', (e) => {
+    state.sideFilter = e.target.value.trim();
+    renderSidebar();
+  });
+  $('#sideSearch').placeholder = 'Filter collections…';
 }
+
+const matchesReq = (saved, q) =>
+  saved.name.toLowerCase().includes(q) ||
+  (saved.request.url || '').toLowerCase().includes(q) ||
+  saved.request.method.toLowerCase().includes(q);
 
 function renderSidebar() {
   const actions = $('#sideActions');
   const list = $('#sideList');
   actions.innerHTML = '';
   list.innerHTML = '';
+  const q = state.sideFilter.toLowerCase();
 
   if (state.sideView === 'collections') {
     const add = el('button', null, '+ New Collection');
     add.addEventListener('click', () =>
       textPrompt('New Collection', 'Collection name', '', (name) => {
-        state.collections.push({ id: uid(), name, open: true, requests: [] });
+        state.collections.push({ id: uid(), name, open: true, requests: [], folders: [] });
         persist();
         renderSidebar();
       })
@@ -678,7 +1102,15 @@ function renderSidebar() {
       );
       return;
     }
-    for (const col of state.collections) list.append(collectionEl(col));
+    let shown = 0;
+    for (const col of state.collections) {
+      const node = collectionEl(col, q);
+      if (node) {
+        list.append(node);
+        shown++;
+      }
+    }
+    if (!shown) list.append(el('div', 'side-empty', 'No matches.'));
   } else {
     if (state.history.length) {
       const clear = el('button', null, 'Clear History');
@@ -691,21 +1123,59 @@ function renderSidebar() {
       });
       actions.append(clear);
     }
+    const items = q
+      ? state.history.filter((h) => (h.request.url || '').toLowerCase().includes(q) || h.request.method.toLowerCase().includes(q))
+      : state.history;
     if (!state.history.length) {
       list.append(Object.assign(el('div', 'side-empty'), { innerHTML: 'Requests you send<br>will show up here.' }));
       return;
     }
-    for (const h of state.history) list.append(historyEl(h));
+    if (!items.length) {
+      list.append(el('div', 'side-empty', 'No matches.'));
+      return;
+    }
+    for (const h of items) list.append(historyEl(h));
   }
 }
 
-function collectionEl(col) {
+function collectionEl(col, q) {
+  const colMatch = q && col.name.toLowerCase().includes(q);
+  let folderViews;
+  let rootReqs;
+  if (!q) {
+    folderViews = (col.folders || []).map((f) => ({ f, requests: f.requests, forceOpen: false }));
+    rootReqs = col.requests;
+  } else {
+    folderViews = [];
+    for (const f of col.folders || []) {
+      const fMatch = f.name.toLowerCase().includes(q);
+      const reqs = colMatch || fMatch ? f.requests : f.requests.filter((s) => matchesReq(s, q));
+      if (reqs.length || fMatch) folderViews.push({ f, requests: reqs, forceOpen: true });
+    }
+    rootReqs = colMatch ? col.requests : col.requests.filter((s) => matchesReq(s, q));
+    if (!colMatch && !folderViews.length && !rootReqs.length) return null;
+  }
+
+  const total = (col.folders || []).reduce((n, f) => n + f.requests.length, col.requests.length);
   const wrap = el('div');
   const header = el('div', 'col-header');
-  const chev = el('span', 'col-chevron', col.open ? '▾' : '▸');
+  const chev = el('span', 'col-chevron', col.open || q ? '▾' : '▸');
   const name = el('span', 'col-name', col.name);
-  const count = el('span', 'col-count', String(col.requests.length));
+  const count = el('span', 'col-count', String(total));
   const acts = el('span', 'col-actions');
+
+  const addFolder = el('button', null, '📁+');
+  addFolder.title = 'New folder';
+  addFolder.addEventListener('click', (e) => {
+    e.stopPropagation();
+    textPrompt('New Folder', 'Folder name', '', (n) => {
+      col.folders = col.folders || [];
+      col.folders.push({ id: uid(), name: n, open: true, requests: [] });
+      col.open = true;
+      persist();
+      renderSidebar();
+    });
+  });
 
   const rename = el('button', null, '✎');
   rename.title = 'Rename collection';
@@ -722,54 +1192,177 @@ function collectionEl(col) {
   del.title = 'Delete collection';
   del.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!confirm(`Delete collection "${col.name}" and its ${col.requests.length} request(s)?`)) return;
+    if (!confirm(`Delete collection "${col.name}" and its ${total} request(s)?`)) return;
     state.collections = state.collections.filter((c) => c !== col);
     for (const t of state.tabs) if (t.savedRef?.collectionId === col.id) t.savedRef = null;
     persist();
     renderSidebar();
   });
 
-  acts.append(rename, del);
+  acts.append(addFolder, rename, del);
   header.append(chev, name, count, acts);
   header.addEventListener('click', () => {
     col.open = !col.open;
     persist();
     renderSidebar();
   });
+  attachDropTarget(header, () => ({ colId: col.id, folderId: null, beforeId: null }));
   wrap.append(header);
 
-  if (col.open) {
-    for (const saved of col.requests) {
-      const row = el('div', 'req-row');
-      const chip = el('span', 'method-chip m-' + saved.request.method, shortMethod(saved.request.method));
-      const nm = el('span', 'req-name', saved.name);
-      const acts2 = el('span', 'col-actions');
-      const del2 = el('button', null, '✕');
-      del2.title = 'Delete request';
-      del2.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (!confirm(`Delete request "${saved.name}"?`)) return;
-        col.requests = col.requests.filter((q) => q !== saved);
-        for (const t of state.tabs) if (t.savedRef?.requestId === saved.id) t.savedRef = null;
-        persist();
-        renderSidebar();
-      });
-      acts2.append(del2);
-      row.append(chip, nm, acts2);
-      row.addEventListener('click', () => openSavedRequest(col, saved));
-      wrap.append(row);
+  if (col.open || q) {
+    for (const { f, requests, forceOpen } of folderViews) {
+      wrap.append(folderEl(col, f, requests, forceOpen));
+      if (f.open || forceOpen) for (const saved of requests) wrap.append(reqRowEl(col, f, saved));
     }
+    for (const saved of rootReqs) wrap.append(reqRowEl(col, null, saved));
   }
   return wrap;
 }
 
-function openSavedRequest(col, saved) {
+function folderEl(col, f, requests, forceOpen) {
+  const header = el('div', 'folder-header');
+  const chev = el('span', 'col-chevron', f.open || forceOpen ? '▾' : '▸');
+  const icon = el('span', 'folder-icon', '📁');
+  const name = el('span', 'col-name', f.name);
+  const count = el('span', 'col-count', String(f.requests.length));
+  const acts = el('span', 'col-actions');
+
+  const rename = el('button', null, '✎');
+  rename.title = 'Rename folder';
+  rename.addEventListener('click', (e) => {
+    e.stopPropagation();
+    textPrompt('Rename Folder', 'Folder name', f.name, (n) => {
+      f.name = n;
+      persist();
+      renderSidebar();
+    });
+  });
+
+  const del = el('button', null, '✕');
+  del.title = 'Delete folder';
+  del.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!confirm(`Delete folder "${f.name}" and its ${f.requests.length} request(s)?`)) return;
+    col.folders = col.folders.filter((x) => x !== f);
+    for (const t of state.tabs) if (t.savedRef?.folderId === f.id) t.savedRef = null;
+    persist();
+    renderSidebar();
+  });
+
+  acts.append(rename, del);
+  header.append(chev, icon, name, count, acts);
+  header.addEventListener('click', () => {
+    f.open = !f.open;
+    persist();
+    renderSidebar();
+  });
+  attachDropTarget(header, () => ({ colId: col.id, folderId: f.id, beforeId: null }));
+  return header;
+}
+
+function attachDropTarget(node, getTarget) {
+  node.addEventListener('dragover', (e) => {
+    if (!dragInfo) return;
+    e.preventDefault();
+    node.classList.add('drag-over');
+  });
+  node.addEventListener('dragleave', () => node.classList.remove('drag-over'));
+  node.addEventListener('drop', (e) => {
+    e.preventDefault();
+    node.classList.remove('drag-over');
+    if (!dragInfo) return;
+    moveSaved(dragInfo, getTarget());
+    dragInfo = null;
+  });
+}
+
+function reqRowEl(col, folder, saved) {
+  const row = el('div', 'req-row' + (folder ? ' in-folder' : ''));
+  const chip = el('span', 'method-chip m-' + saved.request.method, shortMethod(saved.request.method));
+  const nm = el('span', 'req-name', saved.name);
+  const acts = el('span', 'col-actions');
+
+  const rename = el('button', null, '✎');
+  rename.title = 'Rename request';
+  rename.addEventListener('click', (e) => {
+    e.stopPropagation();
+    textPrompt('Rename Request', 'Request name', saved.name, (n) => {
+      saved.name = n;
+      for (const t of state.tabs) if (t.savedRef?.requestId === saved.id) t.name = n;
+      persist();
+      renderSidebar();
+      renderTabsBar();
+    });
+  });
+
+  const dup = el('button', null, '⧉');
+  dup.title = 'Duplicate request';
+  dup.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const list = folder ? folder.requests : col.requests;
+    const idx = list.indexOf(saved);
+    list.splice(idx + 1, 0, { id: uid(), name: saved.name + ' copy', request: structuredClone(saved.request) });
+    persist();
+    renderSidebar();
+  });
+
+  const del = el('button', null, '✕');
+  del.title = 'Delete request';
+  del.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!confirm(`Delete request "${saved.name}"?`)) return;
+    const list = folder ? folder.requests : col.requests;
+    const idx = list.indexOf(saved);
+    if (idx > -1) list.splice(idx, 1);
+    retargetTabs(saved.id, null);
+    persist();
+    renderSidebar();
+  });
+
+  acts.append(rename, dup, del);
+  row.append(chip, nm, acts);
+  row.addEventListener('click', () => openSavedRequest(col, folder, saved));
+
+  row.draggable = !state.sideFilter;
+  row.addEventListener('dragstart', (e) => {
+    dragInfo = { colId: col.id, folderId: folder ? folder.id : null, reqId: saved.id };
+    row.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', saved.id);
+  });
+  row.addEventListener('dragend', () => {
+    dragInfo = null;
+    row.classList.remove('dragging');
+    clearDragMarks();
+  });
+  row.addEventListener('dragover', (e) => {
+    if (!dragInfo || dragInfo.reqId === saved.id) return;
+    e.preventDefault();
+    row.classList.add('drag-over-top');
+  });
+  row.addEventListener('dragleave', () => row.classList.remove('drag-over-top'));
+  row.addEventListener('drop', (e) => {
+    e.preventDefault();
+    row.classList.remove('drag-over-top');
+    if (!dragInfo || dragInfo.reqId === saved.id) return;
+    moveSaved(dragInfo, { colId: col.id, folderId: folder ? folder.id : null, beforeId: saved.id });
+    dragInfo = null;
+  });
+
+  return row;
+}
+
+function openSavedRequest(col, folder, saved) {
   const existing = state.tabs.find((t) => t.savedRef && t.savedRef.requestId === saved.id);
   if (existing) {
     switchTab(existing.id);
     return;
   }
-  const tab = makeTab(structuredClone(saved.request), saved.name, { collectionId: col.id, requestId: saved.id });
+  const tab = makeTab(structuredClone(saved.request), saved.name, {
+    collectionId: col.id,
+    folderId: folder ? folder.id : null,
+    requestId: saved.id,
+  });
   state.tabs.push(tab);
   switchTab(tab.id);
 }
@@ -817,13 +1410,12 @@ function historyEl(h) {
 function saveActive() {
   const tab = activeTab();
   if (tab.savedRef) {
-    const col = state.collections.find((c) => c.id === tab.savedRef.collectionId);
-    const saved = col?.requests.find((q) => q.id === tab.savedRef.requestId);
-    if (saved) {
-      saved.request = cleanRequest(tab.request);
+    const found = findSaved(tab.savedRef);
+    if (found) {
+      found.saved.request = cleanRequest(tab.request);
       persist();
       renderSidebar();
-      toast(`Saved to "${col.name}"`);
+      toast(`Saved to "${found.col.name}"`);
       return;
     }
     tab.savedRef = null;
@@ -831,23 +1423,27 @@ function saveActive() {
   openSaveModal(tab);
 }
 
+function saveAsActive() {
+  openSaveModal(activeTab(), true);
+}
+
 function defaultRequestName(r) {
   try {
-    const u = new URL(applyEnv(r.url));
+    const u = new URL(applyEnv(splitUrl(r.url)[0]));
     return (u.pathname !== '/' && u.pathname) || u.hostname || 'New Request';
   } catch {
-    return r.url || 'New Request';
+    return splitUrl(r.url)[0] || 'New Request';
   }
 }
 
-function openSaveModal(tab) {
+function openSaveModal(tab, saveAs = false) {
   const body = el('div');
 
   const f1 = el('div', 'form-field');
   f1.append(el('label', null, 'Request name'));
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
-  nameInput.value = tab.name || defaultRequestName(tab.request);
+  nameInput.value = (tab.name ? (saveAs ? tab.name + ' copy' : tab.name) : defaultRequestName(tab.request));
   f1.append(nameInput);
 
   const f2 = el('div', 'form-field');
@@ -870,12 +1466,34 @@ function openSaveModal(tab) {
   newColInput.type = 'text';
   newColInput.value = 'My Collection';
   f3.append(newColInput);
-  f3.classList.toggle('hidden', colSel.value !== '__new');
-  colSel.addEventListener('change', () => f3.classList.toggle('hidden', colSel.value !== '__new'));
 
-  body.append(f1, f2, f3);
+  const f4 = el('div', 'form-field');
+  f4.append(el('label', null, 'Folder'));
+  const folderSel = document.createElement('select');
+  f4.append(folderSel);
 
-  const m = modal('Save Request', body, [
+  function refreshDependent() {
+    const isNew = colSel.value === '__new';
+    f3.classList.toggle('hidden', !isNew);
+    const col = state.collections.find((c) => c.id === colSel.value);
+    const folders = (!isNew && col && col.folders) || [];
+    folderSel.innerHTML = '';
+    const root = el('option', null, '(collection root)');
+    root.value = '';
+    folderSel.append(root);
+    for (const f of folders) {
+      const o = el('option', null, f.name);
+      o.value = f.id;
+      folderSel.append(o);
+    }
+    f4.classList.toggle('hidden', isNew || !folders.length);
+  }
+  colSel.addEventListener('change', refreshDependent);
+  refreshDependent();
+
+  body.append(f1, f2, f3, f4);
+
+  const m = modal(saveAs ? 'Save Request As' : 'Save Request', body, [
     { label: 'Cancel' },
     {
       label: 'Save',
@@ -893,14 +1511,16 @@ function openSaveModal(tab) {
             toast('Enter a collection name');
             return false;
           }
-          col = { id: uid(), name: cn, open: true, requests: [] };
+          col = { id: uid(), name: cn, open: true, requests: [], folders: [] };
           state.collections.push(col);
         } else {
           col = state.collections.find((c) => c.id === colSel.value);
         }
+        const folderId = colSel.value === '__new' ? null : folderSel.value || null;
+        const list = folderId ? col.folders.find((f) => f.id === folderId).requests : col.requests;
         const saved = { id: uid(), name, request: cleanRequest(tab.request) };
-        col.requests.push(saved);
-        tab.savedRef = { collectionId: col.id, requestId: saved.id };
+        list.push(saved);
+        tab.savedRef = { collectionId: col.id, folderId, requestId: saved.id };
         tab.name = name;
         persist();
         renderSidebar();
@@ -939,8 +1559,54 @@ function renderTabsBar() {
     });
     d.append(m, n, x);
     d.addEventListener('click', () => switchTab(t.id));
+    d.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      tabContextMenu(t, e.clientX, e.clientY);
+    });
     list.append(d);
   }
+}
+
+function tabContextMenu(t, x, y) {
+  ctxMenu(x, y, [
+    {
+      label: 'Rename',
+      onClick: () =>
+        textPrompt('Rename Request', 'Name', t.name || tabLabel(t), (v) => {
+          t.name = v;
+          const found = findSaved(t.savedRef);
+          if (found) {
+            found.saved.name = v;
+            renderSidebar();
+          }
+          renderTabsBar();
+          persist();
+        }),
+    },
+    {
+      label: 'Duplicate',
+      onClick: () => {
+        const copy = makeTab(structuredClone(t.request), t.name ? t.name + ' copy' : null);
+        state.tabs.splice(state.tabs.indexOf(t) + 1, 0, copy);
+        switchTab(copy.id);
+      },
+    },
+    { label: 'Save As…', onClick: () => openSaveModal(t, true) },
+    '-',
+    { label: 'Close', onClick: () => closeTab(t.id) },
+    {
+      label: 'Close Others',
+      danger: true,
+      onClick: () => {
+        for (const other of state.tabs) if (other !== t) cancelSend(other);
+        state.tabs = [t];
+        state.activeTabId = t.id;
+        renderTabsBar();
+        loadEditor();
+        persist();
+      },
+    },
+  ]);
 }
 
 function switchTab(id) {
@@ -975,7 +1641,7 @@ function closeTab(id) {
   persist();
 }
 
-/* ============================== modals ============================== */
+/* ============================== modals & menus ============================== */
 
 function modal(title, bodyEl, actions) {
   const overlay = el('div', 'modal-overlay');
@@ -1048,6 +1714,42 @@ function textPrompt(title, label, initial, onOk) {
   });
   input.focus();
   input.select();
+}
+
+function ctxMenu(x, y, items) {
+  const root = $('#ctxRoot');
+  root.innerHTML = '';
+  const m = el('div', 'ctx-menu');
+
+  function close() {
+    root.innerHTML = '';
+    document.removeEventListener('mousedown', onDoc, true);
+    document.removeEventListener('keydown', onKey, true);
+  }
+  function onDoc(e) {
+    if (!m.contains(e.target)) close();
+  }
+  function onKey(e) {
+    if (e.key === 'Escape') close();
+  }
+
+  for (const it of items) {
+    if (it === '-') {
+      m.append(el('div', 'ctx-sep'));
+      continue;
+    }
+    const d = el('div', 'ctx-item' + (it.danger ? ' danger' : ''), it.label);
+    d.addEventListener('click', () => {
+      close();
+      it.onClick();
+    });
+    m.append(d);
+  }
+  document.addEventListener('mousedown', onDoc, true);
+  document.addEventListener('keydown', onKey, true);
+  root.append(m);
+  m.style.left = Math.max(4, Math.min(x, window.innerWidth - m.offsetWidth - 8)) + 'px';
+  m.style.top = Math.max(4, Math.min(y, window.innerHeight - m.offsetHeight - 8)) + 'px';
 }
 
 /* ============================== environment manager ============================== */
@@ -1161,16 +1863,12 @@ function initResponseToolbar() {
   );
   $$('.resp-views button').forEach((b) =>
     b.addEventListener('click', () => {
-      activeTab().respView = b.dataset.rview;
+      const tab = activeTab();
+      tab.respView = b.dataset.rview;
+      if (tab.search) tab.search = null;
       renderResponse();
     })
   );
-  $('#btnCopyResp').addEventListener('click', () => {
-    const r = activeTab().response;
-    if (!r || !r.ok) return;
-    navigator.clipboard.writeText(r.bodyText ?? '');
-    toast('Response body copied');
-  });
 }
 
 /* ============================== splitter ============================== */
@@ -1208,18 +1906,24 @@ function initShortcuts() {
       sendActive();
     } else if (k === 's') {
       e.preventDefault();
-      saveActive();
+      if (e.shiftKey) saveAsActive();
+      else saveActive();
     } else if (k === 't') {
       e.preventDefault();
       newTab();
     } else if (k === 'w') {
       e.preventDefault();
       closeTab(state.activeTabId);
+    } else if (k === 'f') {
+      e.preventDefault();
+      openRespSearch();
     }
   });
 }
 
 /* ============================== init ============================== */
+
+const normSaved = (s) => ({ id: s.id || uid(), name: s.name || 'Request', request: normalizeRequest(s.request) });
 
 async function init() {
   let stored = null;
@@ -1230,11 +1934,23 @@ async function init() {
   }
 
   if (stored) {
-    state.collections = Array.isArray(stored.collections) ? stored.collections : [];
+    state.collections = (Array.isArray(stored.collections) ? stored.collections : []).map((c) => ({
+      id: c.id || uid(),
+      name: c.name || 'Collection',
+      open: c.open !== false,
+      requests: (Array.isArray(c.requests) ? c.requests : []).map(normSaved),
+      folders: (Array.isArray(c.folders) ? c.folders : []).map((f) => ({
+        id: f.id || uid(),
+        name: f.name || 'Folder',
+        open: f.open !== false,
+        requests: (Array.isArray(f.requests) ? f.requests : []).map(normSaved),
+      })),
+    }));
     state.history = Array.isArray(stored.history) ? stored.history : [];
     state.environments = Array.isArray(stored.environments) ? stored.environments : [];
     for (const e of state.environments) if (!Array.isArray(e.vars)) e.vars = [];
     state.activeEnvId = stored.activeEnvId || null;
+    state.settings = { ...DEFAULT_SETTINGS, ...(stored.settings || {}) };
     state.tabs = (Array.isArray(stored.tabs) ? stored.tabs : [])
       .filter((t) => t && t.request)
       .map((t) => ({ ...makeTab(t.request, t.name, t.savedRef), id: t.id || uid() }));
@@ -1244,9 +1960,12 @@ async function init() {
   if (!state.tabs.length) state.tabs.push(makeTab());
   if (!state.tabs.some((t) => t.id === state.activeTabId)) state.activeTabId = state.tabs[0].id;
 
+  applyTheme();
   initEditor();
   initSidebar();
   initResponseToolbar();
+  initRespSearch();
+  initRespActions();
   initSplitter();
   initShortcuts();
 
@@ -1256,6 +1975,7 @@ async function init() {
     persist();
   });
   $('#btnManageEnv').addEventListener('click', openEnvManager);
+  $('#btnSettings').addEventListener('click', openSettings);
 
   renderEnvSelect();
   renderSidebar();

@@ -1,7 +1,7 @@
 {
   "name": "lostman",
   "productName": "Lostman",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A free, offline API client for Windows. No login, no cloud — just requests.",
   "author": "Lostman",
   "license": "MIT",
@@ -21,6 +21,7 @@
       "package.json"
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis",
         "portable"

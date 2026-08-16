@@ -11,16 +11,13 @@
 
   <header id="topbar">
     <div class="brand">
-      <svg class="logo" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-        <circle cx="12" cy="12" r="10" fill="none" stroke="#ff6c37" stroke-width="2"/>
-        <polygon points="12,5 14.2,12 12,19 9.8,12" fill="#ff6c37"/>
-        <circle cx="12" cy="12" r="1.6" fill="#17171a"/>
-      </svg>
+      <img class="logo" src="assets/icon-64.png" alt="" width="24" height="24">
       <span class="brand-name">Lostman</span>
     </div>
     <div class="env-area">
       <select id="envSelect" title="Active environment"></select>
       <button id="btnManageEnv" class="ghost" title="Manage environments">Environments</button>
+      <button id="btnSettings" class="ghost" title="Settings">Settings</button>
     </div>
   </header>
 
@@ -29,6 +26,9 @@
       <div class="side-tabs">
         <button data-sideview="collections" class="active">Collections</button>
         <button data-sideview="history">History</button>
+      </div>
+      <div class="side-search">
+        <input id="sideSearch" type="text" spellcheck="false" placeholder="Filter…">
       </div>
       <div id="sideActions"></div>
       <div id="sideList"></div>
@@ -54,7 +54,7 @@
           <input id="url" type="text" spellcheck="false" autocomplete="off"
                  placeholder="Enter request URL — e.g. https://api.example.com/users?page=2   ({{variables}} supported)">
           <button id="btnSend" class="primary" title="Send request (Ctrl+Enter)">Send</button>
-          <button id="btnSave" title="Save to collection (Ctrl+S)">Save</button>
+          <button id="btnSave" title="Save to collection (Ctrl+S) — right-click a tab for Save As">Save</button>
           <button id="btnCurl" class="ghost" title="Copy as cURL command">cURL</button>
         </div>
 
@@ -67,7 +67,7 @@
 
         <div id="panels">
           <div id="panel-params" class="panel active">
-            <div class="panel-hint">Query parameters are appended to the URL when the request is sent.</div>
+            <div class="panel-hint">Synced with the URL — edit either side and the other updates. Disabled rows are kept out of the URL.</div>
             <div id="kvParams" class="kv"></div>
           </div>
 
@@ -146,8 +146,17 @@
             <span id="respStatus" class="pill"></span>
             <span id="respTime" class="meta"></span>
             <span id="respSize" class="meta"></span>
+            <button id="btnFindResp" class="ghost" title="Find in response (Ctrl+F)">Find</button>
             <button id="btnCopyResp" class="ghost" title="Copy response body">Copy</button>
+            <button id="btnSaveResp" class="ghost" title="Save response body to a file">Save</button>
           </div>
+        </div>
+        <div id="respSearchBar" class="hidden">
+          <input id="respSearchInput" type="text" spellcheck="false" placeholder="Find in response body…">
+          <span id="respSearchCount" class="meta"></span>
+          <button id="btnSearchPrev" class="ghost" title="Previous match (Shift+Enter)">▲</button>
+          <button id="btnSearchNext" class="ghost" title="Next match (Enter)">▼</button>
+          <button id="btnSearchClose" class="ghost" title="Close (Esc)">✕</button>
         </div>
         <div id="respContent"></div>
       </div>
@@ -156,6 +165,7 @@
 
   <div id="modalRoot"></div>
   <div id="toastRoot"></div>
+  <div id="ctxRoot"></div>
 
   <script src="app.js"></script>
 </body>
