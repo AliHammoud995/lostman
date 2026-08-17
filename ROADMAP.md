@@ -81,7 +81,7 @@ Ideas for future versions, roughly ordered by value vs. effort. Check items off 
 
 ## Beyond
 
-- [ ] **Publish the VS Code extension to the Marketplace** — needs a publisher account
-      (see vscode/README.md; `npx vsce publish` with a personal access token).
+- [x] **Publish the VS Code extension to the Marketplace** — live as
+      [AkbarHammoud.lostman-api-client](https://marketplace.visualstudio.com/items?itemName=AkbarHammoud.lostman-api-client).
 - [ ] **macOS builds** — the code is already cross-platform; needs a Mac (or CI macos runner)
       for .dmg packaging and ideally notarization.

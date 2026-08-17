@@ -94,16 +94,20 @@ locally on your machine.
 
 ## VS Code extension
 
+[![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/AkbarHammoud.lostman-api-client?label=VS%20Marketplace&color=f0dc92)](https://marketplace.visualstudio.com/items?itemName=AkbarHammoud.lostman-api-client)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/AkbarHammoud.lostman-api-client)](https://marketplace.visualstudio.com/items?itemName=AkbarHammoud.lostman-api-client)
+
 Lostman also runs **inside VS Code** — same UI, same features, same shared HTTP engine.
-Grab `lostman-api-client-*.vsix` from the
-[latest release](https://github.com/AliHammoud995/lostman/releases/latest) and install it:
+Install it [from the Marketplace](https://marketplace.visualstudio.com/items?itemName=AkbarHammoud.lostman-api-client)
+or from the Extensions view:
 
 ```
-code --install-extension lostman-api-client-1.5.0.vsix
+ext install AkbarHammoud.lostman-api-client
 ```
 
 Then `Ctrl+Shift+P` → **"Lostman: Open API Client"**. Its data lives in VS Code's global
-storage, separate from the desktop app. To build it yourself: `cd vscode && npm run package`.
+storage, separate from the desktop app. To build it yourself: `cd vscode && npm run package`
+(a `.vsix` is also attached to every GitHub release).
 
 ## Run from source
 
