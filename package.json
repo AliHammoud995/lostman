@@ -1,8 +1,8 @@
 {
   "name": "lostman",
   "productName": "Lostman",
-  "version": "1.6.0",
-  "description": "A free, offline API client. No login, no cloud — just requests.",
+  "version": "1.6.1",
+  "description": "Lostman",
   "keywords": [
     "api-client",
     "rest-client",
@@ -61,6 +61,7 @@
       "icon": "build/icon.png",
       "category": "Development",
       "synopsis": "Free, offline API client",
+      "description": "A free, offline API client. No login, no cloud — just requests.",
       "syncDesktopName": true,
       "target": [
         "AppImage",
