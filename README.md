@@ -92,6 +92,19 @@ locally on your machine.
 | `Ctrl+Shift+N` | New window |
 | `F12` | Toggle DevTools |
 
+## VS Code extension
+
+Lostman also runs **inside VS Code** — same UI, same features, same shared HTTP engine.
+Grab `lostman-api-client-*.vsix` from the
+[latest release](https://github.com/AliHammoud995/lostman/releases/latest) and install it:
+
+```
+code --install-extension lostman-api-client-1.5.0.vsix
+```
+
+Then `Ctrl+Shift+P` → **"Lostman: Open API Client"**. Its data lives in VS Code's global
+storage, separate from the desktop app. To build it yourself: `cd vscode && npm run package`.
+
 ## Run from source
 
 ```

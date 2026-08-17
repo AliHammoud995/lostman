@@ -29,6 +29,10 @@ jobs:
 
       - run: npx electron-builder ${{ matrix.args }} --publish never
 
+      - name: Package VS Code extension
+        if: matrix.os == 'ubuntu-latest'
+        run: cd vscode && npm run package
+
       - uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -37,5 +41,6 @@ jobs:
             dist/*.deb
             dist/*.blockmap
             dist/latest*.yml
+            vscode/*.vsix
           generate_release_notes: true
           fail_on_unmatched_files: false

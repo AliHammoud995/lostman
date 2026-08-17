@@ -61,9 +61,15 @@ const browserGlobals = {
 };
 
 module.exports = [
+  { ignores: ['vscode/media/**', 'node_modules/**', 'dist/**'] },
   {
-    files: ['src/main.js', 'src/preload.js', 'test/**/*.js'],
+    files: ['src/main.js', 'src/preload.js', 'src/core/**/*.js', 'test/**/*.js', 'vscode/extension.js', 'vscode/build.js'],
     languageOptions: { ecmaVersion: 2024, sourceType: 'commonjs', globals: nodeGlobals },
+    rules: sharedRules,
+  },
+  {
+    files: ['vscode/shim.js'],
+    languageOptions: { ecmaVersion: 2024, sourceType: 'script', globals: { ...browserGlobals, acquireVsCodeApi: 'readonly' } },
     rules: sharedRules,
   },
   {

@@ -1,0 +1,44 @@
+{
+  "name": "lostman-api-client",
+  "displayName": "Lostman — API Client",
+  "description": "Free offline Postman alternative — REST, GraphQL, WebSocket & SSE client inside VS Code. No login, no cloud.",
+  "version": "1.5.0",
+  "publisher": "alihammoud",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AliHammoud995/lostman"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Testing",
+    "Other"
+  ],
+  "keywords": [
+    "api",
+    "rest",
+    "http",
+    "client",
+    "postman",
+    "graphql",
+    "websocket",
+    "api-client"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "lostman.open",
+        "title": "Lostman: Open API Client"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node build.js",
+    "package": "node build.js && npx --yes @vscode/vsce package --no-dependencies"
+  }
+}

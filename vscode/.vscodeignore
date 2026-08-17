@@ -1,0 +1,4 @@
+build.js
+shim.js
+node_modules/**
+*.vsix

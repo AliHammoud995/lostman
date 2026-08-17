@@ -12,6 +12,7 @@ function check(name, cond, extra) {
     console.log(`FAIL ${name}${extra ? ' — ' + extra : ''}`);
   }
 }
+const pendingAsync = [];
 
 /* ================= renderer (app.js) ================= */
 
@@ -300,40 +301,16 @@ const pmDoc = {
   check('fuzzy: contiguous scores higher', a > b);
 }
 
-/* ================= main process (main.js) ================= */
+/* ================= shared engine (src/core/engine.js) ================= */
 
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const electronStub = {
-  app: { setName: () => {}, whenReady: () => ({ then: () => {} }), on: () => {}, isPackaged: true, getPath: () => '.' },
-  BrowserWindow: class { static fromWebContents() { return null; } static getAllWindows() { return []; } },
-  Menu: { setApplicationMenu: () => {} },
-  ipcMain: { handle: () => {} },
-  dialog: {},
-  session: { defaultSession: { resolveProxy: async () => 'DIRECT' } },
-};
-const mainCtx = {
-  require: (name) => (name === 'electron' ? electronStub : require(name)),
-  console,
-  Buffer,
-  URL,
-  URLSearchParams,
-  setTimeout,
-  clearTimeout,
-  Date,
-  JSON,
-  Math,
-  Promise,
-  process,
-};
-vm.createContext(mainCtx);
-vm.runInContext(mainSrc, mainCtx, { filename: 'main.js' });
+const engine = require(path.join(__dirname, '..', 'src', 'core', 'engine.js'));
 
 /* ---- Digest (RFC 2617 vector) ---- */
 {
-  const ch = mainCtx.parseDigestChallenge(
+  const ch = engine.parseDigestChallenge(
     'Digest realm="testrealm@host.com", qop="auth,auth-int", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093", opaque="5ccc069c403ebaf9f0171e9517f40e41"'
   );
-  const auth = mainCtx.buildDigestAuth(ch, 'GET', new URL('http://www.nowhere.org/dir/index.html'), 'Mufasa', 'Circle Of Life', '0a4f113b');
+  const auth = engine.buildDigestAuth(ch, 'GET', new URL('http://www.nowhere.org/dir/index.html'), 'Mufasa', 'Circle Of Life', '0a4f113b');
   const m = auth.match(/response="([a-f0-9]+)"/);
   check('digest: RFC 2617 response hash', m && m[1] === '6629fae49393a05397450978507c4ef1', m && m[1]);
   check('digest: attributes', auth.includes('qop=auth') && auth.includes('nc=00000001') && auth.includes('opaque='));
@@ -342,7 +319,7 @@ vm.runInContext(mainSrc, mainCtx, { filename: 'main.js' });
 /* ---- AWS SigV4 shape ---- */
 {
   const headers = { accept: '*/*', 'content-type': 'application/json' };
-  mainCtx.signAwsV4(
+  engine.signAwsV4(
     { method: 'GET', url: 'https://api.example.amazonaws.com/items?b=2&a=1', auth: { accessKey: 'AKIDEXAMPLE', secretKey: 'SECRET', region: 'us-east-1', service: 'execute-api' } },
     headers,
     null
@@ -358,21 +335,78 @@ vm.runInContext(mainSrc, mainCtx, { filename: 'main.js' });
 
 /* ---- proxy helpers ---- */
 {
-  const p = mainCtx.parseProxyUrl('http://user:p%40ss@proxy.corp:3128');
+  const p = engine.parseProxyUrl('http://user:p%40ss@proxy.corp:3128');
   check('proxy: parse with auth', p && p.host === 'proxy.corp' && p.port === 3128 && p.auth && p.auth.startsWith('Basic '));
-  check('proxy: parse bare host', mainCtx.parseProxyUrl('127.0.0.1:8888').port === 8888);
-  check('proxy: bypass match', mainCtx.hostInBypass('api.internal.dev', 'localhost, .internal.dev') === true);
-  check('proxy: bypass no match', mainCtx.hostInBypass('api.example.com', 'localhost, .internal.dev') === false);
-  check('proxy: bypass wildcard', mainCtx.hostInBypass('anything.dev', '*') === true);
+  check('proxy: parse bare host', engine.parseProxyUrl('127.0.0.1:8888').port === 8888);
+  check('proxy: bypass match', engine.hostInBypass('api.internal.dev', 'localhost, .internal.dev') === true);
+  check('proxy: bypass no match', engine.hostInBypass('api.example.com', 'localhost, .internal.dev') === false);
+  check('proxy: bypass wildcard', engine.hostInBypass('anything.dev', '*') === true);
 }
 
 /* ---- client cert matching ---- */
 {
   const certs = [{ host: '*.example.com', type: 'pfx', pfxPath: 'x.pfx' }, { host: 'api.other.dev', type: 'pem' }];
-  check('cert: wildcard match', mainCtx.certFor('api.example.com', certs) === certs[0]);
-  check('cert: exact match', mainCtx.certFor('api.other.dev', certs) === certs[1]);
-  check('cert: no match', mainCtx.certFor('nope.dev', certs) === null);
+  check('cert: wildcard match', engine.certFor('api.example.com', certs) === certs[0]);
+  check('cert: exact match', engine.certFor('api.other.dev', certs) === certs[1]);
+  check('cert: no match', engine.certFor('nope.dev', certs) === null);
 }
 
-console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL TESTS PASSED');
-process.exit(failures ? 1 : 0);
+/* ---- live engine round-trip against a local HTTP server ---- */
+{
+  const httpMod = require('http');
+  const server = httpMod.createServer((req, res) => {
+    if (req.url === '/redirect') {
+      res.writeHead(302, { location: '/target' });
+      res.end();
+    } else if (req.url === '/target') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, path: req.url }));
+    } else {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'sid=live1; Path=/' });
+        res.end(JSON.stringify({ method: req.method, echo: body, ua: req.headers['user-agent'] }));
+      });
+    }
+  });
+  const done = (async () => {
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const r1 = await engine.sendHttp({
+      id: 'test1',
+      method: 'POST',
+      url: base + '/echo',
+      headers: [{ key: 'Content-Type', value: 'application/json' }],
+      bodyMode: 'raw',
+      rawBody: '{"x":1}',
+      settings: {},
+    });
+    check('engine live: POST echo', r1.ok && r1.status === 200 && JSON.parse(r1.bodyText).echo === '{"x":1}');
+    check('engine live: user-agent default', JSON.parse(r1.bodyText).ua.startsWith('Lostman/'));
+    check('engine live: set-cookie surfaced', r1.headers.some(([k, v]) => k.toLowerCase() === 'set-cookie' && v.includes('sid=live1')));
+    const r2 = await engine.sendHttp({ id: 'test2', method: 'GET', url: base + '/redirect', headers: [], bodyMode: 'none', settings: {} });
+    check('engine live: redirect followed', r2.ok && r2.status === 200 && r2.redirects === 1 && JSON.parse(r2.bodyText).path === '/target');
+    const r3 = await engine.sendHttp({
+      id: 'test3',
+      method: 'GET',
+      url: base + '/redirect',
+      headers: [],
+      bodyMode: 'none',
+      settings: { followRedirects: false },
+    });
+    check('engine live: redirect not followed', r3.ok && r3.status === 302);
+    server.close();
+  })();
+  pendingAsync.push(done);
+}
+
+Promise.all(pendingAsync)
+  .then(() => {
+    console.log(failures ? `\n${failures} FAILURE(S)` : '\nALL TESTS PASSED');
+    process.exit(failures ? 1 : 0);
+  })
+  .catch((err) => {
+    console.log('ASYNC TEST FAILURE:', (err && err.message) || err);
+    process.exit(1);
+  });

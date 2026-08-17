@@ -64,6 +64,7 @@ window.LOSTMAN_LOCALES.fr = {
   'Client ID': 'ID client',
   'Client secret': 'Secret client',
   'Close': 'Fermer',
+  'Confirm': 'Confirmer',
   'Close (Esc)': 'Fermer (Échap)',
   'Close Others': 'Fermer les autres',
   'Close tab (Ctrl+W)': 'Fermer l’onglet (Ctrl+W)',

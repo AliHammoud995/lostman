@@ -25,7 +25,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node test/run-tests.js",
-    "lint": "eslint src test",
+    "lint": "eslint src test vscode",
     "format": "prettier --write src test",
     "dist": "electron-builder --win",
     "dist:linux": "electron-builder --linux",

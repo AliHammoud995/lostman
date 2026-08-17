@@ -75,3 +75,13 @@ Ideas for future versions, roughly ordered by value vs. effort. Check items off 
 - [x] **Localization** — full i18n system (English keys with graceful fallback) shipping
       English, العربية (RTL), Français, Español and Deutsch; language picker in Settings;
       a CI test fails if any new string is left untranslated. *(v1.5)*
+- [x] **VS Code extension** — the whole app inside a VS Code webview, reusing the renderer
+      and a shared Electron-free HTTP engine; packaged as a .vsix by the release workflow.
+      *(v1.5)*
+
+## Beyond
+
+- [ ] **Publish the VS Code extension to the Marketplace** — needs a publisher account
+      (see vscode/README.md; `npx vsce publish` with a personal access token).
+- [ ] **macOS builds** — the code is already cross-platform; needs a Mac (or CI macos runner)
+      for .dmg packaging and ideally notarization.

@@ -64,6 +64,7 @@ window.LOSTMAN_LOCALES.es = {
   'Client ID': 'ID de cliente',
   'Client secret': 'Secreto de cliente',
   'Close': 'Cerrar',
+  'Confirm': 'Confirmar',
   'Close (Esc)': 'Cerrar (Esc)',
   'Close Others': 'Cerrar las demás',
   'Close tab (Ctrl+W)': 'Cerrar pestaña (Ctrl+W)',

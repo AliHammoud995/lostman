@@ -443,7 +443,7 @@ function openSettings() {
       toast(f.error);
       return;
     }
-    if (importFromJsonText(f.content)) m.close();
+    if (await importFromJsonText(f.content)) m.close();
   });
   dataRow.append(backupBtn, restoreBtn);
   fData.append(dataRow);
@@ -1801,12 +1801,11 @@ function renderSidebar() {
   } else {
     if (state.history.length) {
       const clear = el('button', null, t('Clear History'));
-      clear.addEventListener('click', () => {
-        if (confirm(t('Clear all request history?'))) {
-          state.history = [];
-          persist();
-          renderSidebar();
-        }
+      clear.addEventListener('click', async () => {
+        if (!(await confirmDialog(t('Clear all request history?')))) return;
+        state.history = [];
+        persist();
+        renderSidebar();
       });
       actions.append(clear);
     }
@@ -1877,9 +1876,9 @@ function collectionEl(col, q) {
 
   const del = el('button', null, '✕');
   del.title = t('Delete collection');
-  del.addEventListener('click', (e) => {
+  del.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (!confirm(t('Delete collection "{name}" and its {n} request(s)?', { name: col.name, n: total }))) return;
+    if (!(await confirmDialog(t('Delete collection "{name}" and its {n} request(s)?', { name: col.name, n: total })))) return;
     state.collections = state.collections.filter((c) => c !== col);
     for (const t of state.tabs) if (t.savedRef?.collectionId === col.id) t.savedRef = null;
     persist();
@@ -1946,9 +1945,9 @@ function folderEl(col, f, requests, forceOpen) {
 
   const del = el('button', null, '✕');
   del.title = t('Delete folder');
-  del.addEventListener('click', (e) => {
+  del.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (!confirm(t('Delete folder "{name}" and its {n} request(s)?', { name: f.name, n: f.requests.length }))) return;
+    if (!(await confirmDialog(t('Delete folder "{name}" and its {n} request(s)?', { name: f.name, n: f.requests.length })))) return;
     col.folders = col.folders.filter((x) => x !== f);
     for (const t of state.tabs) if (t.savedRef?.folderId === f.id) t.savedRef = null;
     persist();
@@ -2014,9 +2013,9 @@ function reqRowEl(col, folder, saved) {
 
   const del = el('button', null, '✕');
   del.title = t('Delete request');
-  del.addEventListener('click', (e) => {
+  del.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (!confirm(t('Delete request "{name}"?', { name: saved.name }))) return;
+    if (!(await confirmDialog(t('Delete request "{name}"?', { name: saved.name })))) return;
     const list = folder ? folder.requests : col.requests;
     const idx = list.indexOf(saved);
     if (idx > -1) list.splice(idx, 1);
@@ -2434,6 +2433,23 @@ function textPrompt(title, label, initial, onOk) {
   input.select();
 }
 
+// Native confirm() is blocked inside VS Code webviews, so destructive actions use this
+// awaitable in-app dialog in both hosts.
+function confirmDialog(msg) {
+  return new Promise((resolve) => {
+    const body = el('div');
+    const text = el('div');
+    text.style.maxWidth = '460px';
+    text.style.lineHeight = '1.5';
+    text.textContent = msg;
+    body.append(text);
+    modal(t('Confirm'), body, [
+      { label: t('Cancel'), onClick: () => resolve(false) },
+      { label: t('OK'), primary: true, onClick: () => resolve(true) },
+    ]);
+  });
+}
+
 function ctxMenu(x, y, items) {
   const root = $('#ctxRoot');
   root.innerHTML = '';
@@ -2605,8 +2621,8 @@ function openEnvManager() {
 
     if (!isGlobals) {
       const del = el('button', null, t('Delete'));
-      del.addEventListener('click', () => {
-        if (!confirm(t('Delete environment "{name}"?', { name: env.name }))) return;
+      del.addEventListener('click', async () => {
+        if (!(await confirmDialog(t('Delete environment "{name}"?', { name: env.name })))) return;
         state.environments = state.environments.filter((e) => e !== env);
         if (state.activeEnvId === env.id) state.activeEnvId = null;
         selId = '__globals';
@@ -2989,10 +3005,12 @@ function openCookieModal() {
     {
       label: t('Clear All'),
       onClick: () => {
-        if (!confirm(t('Delete all stored cookies?'))) return false;
-        state.cookies = [];
-        persist();
-        refresh();
+        confirmDialog(t('Delete all stored cookies?')).then((ok) => {
+          if (!ok) return;
+          state.cookies = [];
+          persist();
+          refresh();
+        });
         return false;
       },
     },
@@ -3673,7 +3691,7 @@ function openRunnerModal(col) {
 
 /* ============================== import: detection ============================== */
 
-function importFromJsonText(text) {
+async function importFromJsonText(text) {
   let obj;
   try {
     obj = JSON.parse(text);
@@ -3714,7 +3732,7 @@ function importFromJsonText(text) {
     return true;
   }
   if (obj && Array.isArray(obj.collections) && Array.isArray(obj.tabs)) {
-    if (!confirm(t('Restore this Lostman backup? It will REPLACE all current collections, history, environments, tabs and settings.')))
+    if (!(await confirmDialog(t('Restore this Lostman backup? It will REPLACE all current collections, history, environments, tabs and settings.'))))
       return false;
     restoreBackup(obj);
     toast(t('Backup restored'));
@@ -3755,7 +3773,7 @@ function openImportModal() {
       toast(f.error);
       return;
     }
-    if (importFromJsonText(f.content)) m.close();
+    if (await importFromJsonText(f.content)) m.close();
   });
 
   curlBtn.addEventListener('click', () => {

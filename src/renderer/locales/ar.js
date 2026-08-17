@@ -64,6 +64,7 @@ window.LOSTMAN_LOCALES.ar = {
   'Client ID': 'معرّف العميل',
   'Client secret': 'سر العميل',
   'Close': 'إغلاق',
+  'Confirm': 'تأكيد',
   'Close (Esc)': 'إغلاق (Esc)',
   'Close Others': 'إغلاق البقية',
   'Close tab (Ctrl+W)': 'إغلاق التبويب (Ctrl+W)',
