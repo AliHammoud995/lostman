@@ -66,6 +66,8 @@ locally on your machine.
   one-click restart when a new version is ready.
 - **Portable mode** — flip a switch in Settings to keep all data next to the app
   (great on USB sticks); Lostman auto-detects it on launch.
+- **5 languages** — English, العربية (with right-to-left layout), Français, Español and
+  Deutsch, switchable in Settings.
 - **Import anything** — Postman collections (v2.x) and environments, OpenAPI 3 / Swagger 2
   specs (JSON), pasted cURL commands, and Lostman backups — all from the sidebar's
   Import button.

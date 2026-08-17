@@ -949,6 +949,30 @@ table.hdr-table td:first-child { color: var(--muted); width: 240px; }
 }
 .toast.show { opacity: 1; transform: translateY(0); }
 
+/* ---------- RTL (Arabic) ---------- */
+
+/* Technical fields stay left-to-right even in RTL locales. */
+[dir='rtl'] #url,
+[dir='rtl'] #rawBody,
+[dir='rtl'] #gqlQuery,
+[dir='rtl'] #gqlVariables,
+[dir='rtl'] #preScript,
+[dir='rtl'] #testScript,
+[dir='rtl'] .kv-row input[type='text'],
+[dir='rtl'] pre.code,
+[dir='rtl'] .code-box,
+[dir='rtl'] .hist-url,
+[dir='rtl'] .stream-log,
+[dir='rtl'] .cookie-row,
+[dir='rtl'] table.hdr-table,
+[dir='rtl'] #respSearchInput,
+[dir='rtl'] .palette-hint,
+[dir='rtl'] .ac-menu {
+  direction: ltr;
+  text-align: left;
+}
+[dir='rtl'] .method-chip { text-align: left; }
+
 /* ---------- Scrollbars ---------- */
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }

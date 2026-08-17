@@ -72,4 +72,6 @@ Ideas for future versions, roughly ordered by value vs. effort. Check items off 
 - [x] **Multi-window** — Ctrl+Shift+N or the palette; shared data syncs between windows. *(v1.4)*
 - [x] **Tests & linting** — 63 unit tests (`npm test`) + ESLint/Prettier, enforced by a CI
       workflow on every push. *(v1.4)*
-- [ ] **Localization** — extract UI strings so translations are possible.
+- [x] **Localization** — full i18n system (English keys with graceful fallback) shipping
+      English, العربية (RTL), Français, Español and Deutsch; language picker in Settings;
+      a CI test fails if any new string is left untranslated. *(v1.5)*

@@ -15,18 +15,18 @@
       <span class="brand-name">Lostman</span>
     </div>
     <div class="env-area">
-      <select id="envSelect" title="Active environment"></select>
-      <button id="btnManageEnv" class="ghost" title="Manage environments and globals">Environments</button>
-      <button id="btnCookies" class="ghost" title="Cookie manager">Cookies</button>
-      <button id="btnSettings" class="ghost" title="Settings">Settings</button>
+      <select id="envSelect" data-i18n-title title="Active environment"></select>
+      <button id="btnManageEnv" class="ghost" data-i18n data-i18n-title title="Manage environments and globals">Environments</button>
+      <button id="btnCookies" class="ghost" data-i18n data-i18n-title title="Cookie manager">Cookies</button>
+      <button id="btnSettings" class="ghost" data-i18n data-i18n-title title="Settings">Settings</button>
     </div>
   </header>
 
   <div id="main">
     <aside id="sidebar">
       <div class="side-tabs">
-        <button data-sideview="collections" class="active">Collections</button>
-        <button data-sideview="history">History</button>
+        <button data-sideview="collections" class="active" data-i18n>Collections</button>
+        <button data-sideview="history" data-i18n>History</button>
       </div>
       <div class="side-search">
         <input id="sideSearch" type="text" spellcheck="false" placeholder="Filter…">
@@ -38,7 +38,7 @@
     <div id="content">
       <div id="tabsBar">
         <div id="tabsList"></div>
-        <button id="btnNewTab" title="New request tab (Ctrl+T)">+</button>
+        <button id="btnNewTab" data-i18n-title title="New request tab (Ctrl+T)">+</button>
       </div>
 
       <div id="editor">
@@ -54,141 +54,141 @@
             <option>WS</option>
             <option>SSE</option>
           </select>
-          <input id="url" type="text" spellcheck="false" autocomplete="off"
+          <input id="url" type="text" spellcheck="false" autocomplete="off" data-i18n-placeholder
                  placeholder="Enter request URL — e.g. https://api.example.com/users?page=2   ({{variables}} supported)">
-          <button id="btnSend" class="primary" title="Send request (Ctrl+Enter)">Send</button>
-          <button id="btnSave" title="Save to collection (Ctrl+S) — right-click a tab for Save As">Save</button>
-          <button id="btnCode" class="ghost" title="Generate code snippet (cURL, fetch, axios, Python, PowerShell, C#, Go)">&lt;/&gt;</button>
+          <button id="btnSend" class="primary" data-i18n data-i18n-title title="Send request (Ctrl+Enter)">Send</button>
+          <button id="btnSave" data-i18n data-i18n-title title="Save to collection (Ctrl+S) — right-click a tab for Save As">Save</button>
+          <button id="btnCode" class="ghost" data-i18n-title title="Generate code snippet (cURL, fetch, axios, Python, PowerShell, C#, Go)">&lt;/&gt;</button>
         </div>
 
         <div class="editor-tabs">
-          <button data-panel="params" class="active">Params<span id="cntParams" class="cnt"></span></button>
-          <button data-panel="headers">Headers<span id="cntHeaders" class="cnt"></span></button>
-          <button data-panel="body">Body<span id="dotBody" class="dot hidden"></span></button>
-          <button data-panel="auth">Auth<span id="dotAuth" class="dot hidden"></span></button>
-          <button data-panel="scripts">Scripts<span id="dotScripts" class="dot hidden"></span></button>
+          <button data-panel="params" class="active" data-i18n>Params<span id="cntParams" class="cnt"></span></button>
+          <button data-panel="headers" data-i18n>Headers<span id="cntHeaders" class="cnt"></span></button>
+          <button data-panel="body" data-i18n>Body<span id="dotBody" class="dot hidden"></span></button>
+          <button data-panel="auth" data-i18n>Auth<span id="dotAuth" class="dot hidden"></span></button>
+          <button data-panel="scripts" data-i18n>Scripts<span id="dotScripts" class="dot hidden"></span></button>
         </div>
 
         <div id="panels">
           <div id="panel-params" class="panel active">
-            <div class="panel-hint">Synced with the URL — edit either side and the other updates. Disabled rows are kept out of the URL.</div>
+            <div class="panel-hint" data-i18n>Synced with the URL — edit either side and the other updates. Disabled rows are kept out of the URL.</div>
             <div id="kvParams" class="kv"></div>
           </div>
 
           <div id="panel-headers" class="panel">
-            <div class="panel-hint">Headers sent with the request. Content-Type is added automatically for raw JSON bodies unless you set one.</div>
+            <div class="panel-hint" data-i18n>Headers sent with the request. Content-Type is added automatically for raw JSON bodies unless you set one.</div>
             <div id="kvHeaders" class="kv"></div>
           </div>
 
           <div id="panel-body" class="panel">
             <div class="body-modes">
-              <label><input type="radio" name="bodyMode" value="none"> none</label>
+              <label><input type="radio" name="bodyMode" value="none"> <span data-i18n>none</span></label>
               <label><input type="radio" name="bodyMode" value="formdata"> form-data</label>
               <label><input type="radio" name="bodyMode" value="urlencoded"> x-www-form-urlencoded</label>
               <label><input type="radio" name="bodyMode" value="raw"> raw</label>
               <label><input type="radio" name="bodyMode" value="graphql"> GraphQL</label>
               <select id="rawType" class="hidden">
                 <option value="json">JSON</option>
-                <option value="text">Text</option>
+                <option value="text" data-i18n>Text</option>
               </select>
-              <button id="btnBeautify" class="ghost hidden" title="Format JSON">Beautify</button>
+              <button id="btnBeautify" class="ghost hidden" data-i18n data-i18n-title title="Format JSON">Beautify</button>
             </div>
-            <div id="bodyNone" class="body-area body-none">This request has no body</div>
+            <div id="bodyNone" class="body-area body-none" data-i18n>This request has no body</div>
             <textarea id="rawBody" class="body-area hidden" spellcheck="false"
                       placeholder='{&#10;  "key": "value"&#10;}'></textarea>
             <div id="kvForm" class="kv body-area hidden"></div>
             <div id="gqlArea" class="hidden">
-              <div class="panel-hint">Query</div>
+              <div class="panel-hint" data-i18n>Query</div>
               <textarea id="gqlQuery" spellcheck="false" placeholder="query { user(id: 1) { name email } }"></textarea>
-              <div class="panel-hint" style="margin-top:8px">Variables (JSON)</div>
+              <div class="panel-hint" style="margin-top:8px" data-i18n>Variables (JSON)</div>
               <textarea id="gqlVariables" spellcheck="false" placeholder='{ "id": 1 }'></textarea>
             </div>
           </div>
 
           <div id="panel-auth" class="panel">
             <div class="auth-row">
-              <label for="authType">Type</label>
+              <label for="authType" data-i18n>Type</label>
               <select id="authType">
-                <option value="none">No Auth</option>
-                <option value="bearer">Bearer Token</option>
-                <option value="basic">Basic Auth</option>
-                <option value="apikey">API Key</option>
+                <option value="none" data-i18n>No Auth</option>
+                <option value="bearer" data-i18n>Bearer Token</option>
+                <option value="basic" data-i18n>Basic Auth</option>
+                <option value="apikey" data-i18n>API Key</option>
                 <option value="oauth2">OAuth 2.0</option>
-                <option value="digest">Digest Auth</option>
+                <option value="digest" data-i18n>Digest Auth</option>
                 <option value="awsv4">AWS Signature v4</option>
               </select>
             </div>
             <div id="auth-bearer" class="auth-group hidden">
-              <label for="authToken">Token</label>
-              <input id="authToken" type="text" spellcheck="false" placeholder="Token ({{variables}} supported)">
+              <label for="authToken" data-i18n>Token</label>
+              <input id="authToken" type="text" spellcheck="false" data-i18n-placeholder placeholder="Token ({{variables}} supported)">
             </div>
             <div id="auth-basic" class="auth-group hidden">
-              <label for="authUser">Username</label>
+              <label for="authUser" data-i18n>Username</label>
               <input id="authUser" type="text" spellcheck="false">
-              <label for="authPass">Password</label>
+              <label for="authPass" data-i18n>Password</label>
               <input id="authPass" type="password">
             </div>
             <div id="auth-apikey" class="auth-group hidden">
-              <label for="authKeyName">Key</label>
+              <label for="authKeyName" data-i18n>Key</label>
               <input id="authKeyName" type="text" spellcheck="false" placeholder="e.g. X-Api-Key">
-              <label for="authKeyValue">Value</label>
+              <label for="authKeyValue" data-i18n>Value</label>
               <input id="authKeyValue" type="text" spellcheck="false">
-              <label for="authAddTo">Add to</label>
+              <label for="authAddTo" data-i18n>Add to</label>
               <select id="authAddTo">
-                <option value="header">Header</option>
-                <option value="query">Query Params</option>
+                <option value="header" data-i18n>Header</option>
+                <option value="query" data-i18n>Query Params</option>
               </select>
             </div>
             <div id="auth-oauth2" class="auth-group hidden">
-              <label for="oauthGrant">Grant type</label>
+              <label for="oauthGrant" data-i18n>Grant type</label>
               <select id="oauthGrant">
-                <option value="client_credentials">Client Credentials</option>
-                <option value="auth_code">Authorization Code (PKCE)</option>
+                <option value="client_credentials" data-i18n>Client Credentials</option>
+                <option value="auth_code" data-i18n>Authorization Code (PKCE)</option>
               </select>
-              <label for="oauthAuthUrl" class="oauth-ac-only">Auth URL</label>
+              <label for="oauthAuthUrl" class="oauth-ac-only" data-i18n>Auth URL</label>
               <input id="oauthAuthUrl" class="oauth-ac-only" type="text" spellcheck="false" placeholder="https://auth.example.com/authorize">
-              <label for="oauthTokenUrl">Token URL</label>
+              <label for="oauthTokenUrl" data-i18n>Token URL</label>
               <input id="oauthTokenUrl" type="text" spellcheck="false" placeholder="https://auth.example.com/oauth/token">
-              <label for="oauthClientId">Client ID</label>
+              <label for="oauthClientId" data-i18n>Client ID</label>
               <input id="oauthClientId" type="text" spellcheck="false">
-              <label for="oauthClientSecret">Client secret</label>
-              <input id="oauthClientSecret" type="password" spellcheck="false" placeholder="optional for PKCE">
-              <label for="oauthScope">Scope</label>
+              <label for="oauthClientSecret" data-i18n>Client secret</label>
+              <input id="oauthClientSecret" type="password" spellcheck="false" data-i18n-placeholder placeholder="optional for PKCE">
+              <label for="oauthScope" data-i18n>Scope</label>
               <input id="oauthScope" type="text" spellcheck="false" placeholder="e.g. read write">
-              <label for="oauthRedirect" class="oauth-ac-only">Redirect URI</label>
+              <label for="oauthRedirect" class="oauth-ac-only" data-i18n>Redirect URI</label>
               <input id="oauthRedirect" class="oauth-ac-only" type="text" spellcheck="false">
-              <label for="oauthClientAuth">Send credentials</label>
+              <label for="oauthClientAuth" data-i18n>Send credentials</label>
               <select id="oauthClientAuth">
-                <option value="body">In request body</option>
-                <option value="basic">As Basic auth header</option>
+                <option value="body" data-i18n>In request body</option>
+                <option value="basic" data-i18n>As Basic auth header</option>
               </select>
               <label></label>
               <div class="oauth-actions">
-                <button id="btnOauthFetch" class="primary">Fetch Token</button>
-                <button id="btnOauthClear">Clear Token</button>
+                <button id="btnOauthFetch" class="primary" data-i18n>Fetch Token</button>
+                <button id="btnOauthClear" data-i18n>Clear Token</button>
               </div>
               <label></label>
-              <div id="oauthStatus" class="panel-hint" style="margin:0">No token fetched yet.</div>
+              <div id="oauthStatus" class="panel-hint" style="margin:0" data-i18n>No token fetched yet.</div>
             </div>
             <div id="auth-digest" class="auth-group hidden">
-              <label for="digestUser">Username</label>
+              <label for="digestUser" data-i18n>Username</label>
               <input id="digestUser" type="text" spellcheck="false">
-              <label for="digestPass">Password</label>
+              <label for="digestPass" data-i18n>Password</label>
               <input id="digestPass" type="password">
               <label></label>
-              <div class="panel-hint" style="margin:0">The 401 challenge is answered automatically (MD5 / SHA-256, qop=auth).</div>
+              <div class="panel-hint" style="margin:0" data-i18n>The 401 challenge is answered automatically (MD5 / SHA-256, qop=auth).</div>
             </div>
             <div id="auth-awsv4" class="auth-group hidden">
-              <label for="awsAccessKey">Access key</label>
+              <label for="awsAccessKey" data-i18n>Access key</label>
               <input id="awsAccessKey" type="text" spellcheck="false">
-              <label for="awsSecretKey">Secret key</label>
+              <label for="awsSecretKey" data-i18n>Secret key</label>
               <input id="awsSecretKey" type="password" spellcheck="false">
-              <label for="awsRegion">Region</label>
+              <label for="awsRegion" data-i18n>Region</label>
               <input id="awsRegion" type="text" spellcheck="false" placeholder="us-east-1">
-              <label for="awsService">Service</label>
+              <label for="awsService" data-i18n>Service</label>
               <input id="awsService" type="text" spellcheck="false" placeholder="execute-api">
-              <label for="awsSession">Session token</label>
-              <input id="awsSession" type="text" spellcheck="false" placeholder="optional">
+              <label for="awsSession" data-i18n>Session token</label>
+              <input id="awsSession" type="text" spellcheck="false" data-i18n-placeholder placeholder="optional">
             </div>
           </div>
 
@@ -198,45 +198,45 @@
               response: <code>pm.test("name", () =&gt; expect(pm.response.code).toBe(200))</code>.
               Chain responses with <code>{{res.&lt;RequestName&gt;.body.&lt;path&gt;}}</code> or <code>{{res.last.body…}}</code>.
             </div>
-            <div class="panel-hint">Pre-request Script</div>
+            <div class="panel-hint" data-i18n>Pre-request Script</div>
             <textarea id="preScript" spellcheck="false" placeholder='pm.request.headers.add({ key: "X-Time", value: Date.now() });'></textarea>
-            <div class="panel-hint" style="margin-top:8px">Tests</div>
+            <div class="panel-hint" style="margin-top:8px" data-i18n>Tests</div>
             <textarea id="testScript" spellcheck="false" placeholder='pm.test("status is 200", () => expect(pm.response.code).toBe(200));&#10;pm.test("has token", () => expect(pm.response.json()).toHaveProperty("token"));'></textarea>
           </div>
         </div>
       </div>
 
-      <div id="splitter" title="Drag to resize"></div>
+      <div id="splitter" data-i18n-title title="Drag to resize"></div>
 
       <div id="responsePane">
         <div id="respToolbar" class="hidden">
           <div class="resp-tabs">
-            <button data-rtab="body" class="active">Body</button>
-            <button data-rtab="headers">Headers<span id="respHdrCount" class="cnt"></span></button>
-            <button data-rtab="tests" id="respTestsBtn" class="hidden">Tests<span id="respTestCount" class="cnt"></span></button>
+            <button data-rtab="body" class="active" data-i18n>Body</button>
+            <button data-rtab="headers" data-i18n>Headers<span id="respHdrCount" class="cnt"></span></button>
+            <button data-rtab="tests" id="respTestsBtn" class="hidden" data-i18n>Tests<span id="respTestCount" class="cnt"></span></button>
           </div>
           <div class="resp-views" id="respViews">
-            <button data-rview="pretty" class="active">Pretty</button>
-            <button data-rview="raw">Raw</button>
-            <button data-rview="preview" id="btnPreview" class="hidden">Preview</button>
-            <button data-rview="diff" id="btnDiff" class="hidden" title="Compare with the pinned response">Diff</button>
+            <button data-rview="pretty" class="active" data-i18n>Pretty</button>
+            <button data-rview="raw" data-i18n>Raw</button>
+            <button data-rview="preview" id="btnPreview" class="hidden" data-i18n>Preview</button>
+            <button data-rview="diff" id="btnDiff" class="hidden" data-i18n data-i18n-title title="Compare with the pinned response">Diff</button>
           </div>
           <div class="resp-meta">
             <span id="respStatus" class="pill"></span>
             <span id="respTime" class="meta"></span>
             <span id="respSize" class="meta"></span>
-            <button id="btnPinResp" class="ghost" title="Pin this response as the diff baseline">Pin</button>
-            <button id="btnFindResp" class="ghost" title="Find in response (Ctrl+F)">Find</button>
-            <button id="btnCopyResp" class="ghost" title="Copy response body">Copy</button>
-            <button id="btnSaveResp" class="ghost" title="Save response body to a file">Save</button>
+            <button id="btnPinResp" class="ghost" data-i18n data-i18n-title title="Pin this response as the diff baseline">Pin</button>
+            <button id="btnFindResp" class="ghost" data-i18n data-i18n-title title="Find in response (Ctrl+F)">Find</button>
+            <button id="btnCopyResp" class="ghost" data-i18n data-i18n-title title="Copy response body">Copy</button>
+            <button id="btnSaveResp" class="ghost" data-i18n data-i18n-title title="Save response body to a file">Save</button>
           </div>
         </div>
         <div id="respSearchBar" class="hidden">
-          <input id="respSearchInput" type="text" spellcheck="false" placeholder="Find in response body…">
+          <input id="respSearchInput" type="text" spellcheck="false" data-i18n-placeholder placeholder="Find in response body…">
           <span id="respSearchCount" class="meta"></span>
-          <button id="btnSearchPrev" class="ghost" title="Previous match (Shift+Enter)">▲</button>
-          <button id="btnSearchNext" class="ghost" title="Next match (Enter)">▼</button>
-          <button id="btnSearchClose" class="ghost" title="Close (Esc)">✕</button>
+          <button id="btnSearchPrev" class="ghost" data-i18n-title title="Previous match (Shift+Enter)">▲</button>
+          <button id="btnSearchNext" class="ghost" data-i18n-title title="Next match (Enter)">▼</button>
+          <button id="btnSearchClose" class="ghost" data-i18n-title title="Close (Esc)">✕</button>
         </div>
         <div id="respContent"></div>
       </div>
@@ -248,6 +248,11 @@
   <div id="ctxRoot"></div>
   <div id="acRoot"></div>
 
+  <script src="i18n.js"></script>
+  <script src="locales/ar.js"></script>
+  <script src="locales/fr.js"></script>
+  <script src="locales/es.js"></script>
+  <script src="locales/de.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

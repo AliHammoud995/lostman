@@ -1,7 +1,7 @@
 {
   "name": "lostman",
   "productName": "Lostman",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "A free, offline API client. No login, no cloud — just requests.",
   "keywords": [
     "api-client",

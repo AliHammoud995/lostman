@@ -53,6 +53,11 @@ const browserGlobals = {
   btoa: 'readonly',
   atob: 'readonly',
   Event: 'readonly',
+  // provided by i18n.js, loaded before app.js
+  t: 'readonly',
+  setLocale: 'readonly',
+  currentLocale: 'readonly',
+  applyStaticI18n: 'readonly',
 };
 
 module.exports = [
@@ -65,5 +70,10 @@ module.exports = [
     files: ['src/renderer/**/*.js'],
     languageOptions: { ecmaVersion: 2024, sourceType: 'script', globals: browserGlobals },
     rules: sharedRules,
+  },
+  {
+    // i18n.js defines the globals consumed by app.js
+    files: ['src/renderer/i18n.js'],
+    rules: { 'no-unused-vars': 'off' },
   },
 ];

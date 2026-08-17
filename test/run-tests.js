@@ -22,6 +22,7 @@ const appCtx = {
   crypto: require('crypto').webcrypto ?? require('crypto'),
   console,
   window: { lostman: { saveStore: () => {} } },
+  document: { documentElement: { lang: 'en', dir: 'ltr' }, querySelectorAll: () => [] },
   confirm: () => true,
   requestAnimationFrame: () => {},
   structuredClone,
@@ -36,8 +37,51 @@ const appCtx = {
   TextEncoder,
 };
 vm.createContext(appCtx);
+const rendererDir = path.join(__dirname, '..', 'src', 'renderer');
+vm.runInContext(fs.readFileSync(path.join(rendererDir, 'i18n.js'), 'utf8'), appCtx, { filename: 'i18n.js' });
+for (const loc of ['ar', 'fr', 'es', 'de']) {
+  vm.runInContext(fs.readFileSync(path.join(rendererDir, 'locales', loc + '.js'), 'utf8'), appCtx, { filename: loc + '.js' });
+}
 vm.runInContext(appSrc, appCtx, { filename: 'app.js' });
 const S = vm.runInContext('state', appCtx);
+
+/* ---- i18n ---- */
+{
+  check('i18n: fallback identity', appCtx.t('Some untranslated string') === 'Some untranslated string');
+  check('i18n: interpolation', appCtx.t('Saved to "{name}"', { name: 'X' }) === 'Saved to "X"');
+  appCtx.setLocale('fr');
+  check('i18n: fr translation', appCtx.t('Cancel') === 'Annuler');
+  check('i18n: fr interpolation', appCtx.t('Saved to "{name}"', { name: 'API' }).includes('API'));
+  appCtx.setLocale('ar');
+  check('i18n: ar translation + rtl', appCtx.t('Settings') === 'الإعدادات' && appCtx.document.documentElement.dir === 'rtl');
+  appCtx.setLocale('en');
+  check('i18n: back to en + ltr', appCtx.t('Cancel') === 'Cancel' && appCtx.document.documentElement.dir === 'ltr');
+
+  // Coverage guard: every t()/data-i18n key must exist in every locale (minus decorative glyphs).
+  const html = fs.readFileSync(path.join(rendererDir, 'index.html'), 'utf8');
+  const keys = new Set();
+  const re = /\bt\(\s*(?:'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")/g;
+  let m;
+  while ((m = re.exec(appSrc))) keys.add((m[1] ?? m[2]).replace(/\\'/g, "'").replace(/\\"/g, '"'));
+  const tagRe = /<[a-z]+[^>]*\bdata-i18n\b[^>]*>([^<]*)/g;
+  while ((m = tagRe.exec(html))) if (m[1].trim()) keys.add(m[1].trim());
+  const titleRe = /<[a-z]+[^>]*\bdata-i18n-title\b[^>]*>/g;
+  while ((m = titleRe.exec(html))) {
+    const tm = m[0].match(/title="([^"]*)"/);
+    if (tm && tm[1]) keys.add(tm[1]);
+  }
+  const phRe = /<[a-z]+[^>]*\bdata-i18n-placeholder\b[^>]*>/g;
+  while ((m = phRe.exec(html))) {
+    const pm = m[0].match(/placeholder="([^"]*)"/);
+    if (pm && pm[1]) keys.add(pm[1]);
+  }
+  const skip = new Set(['+', '▲', '▼', '✕', '&lt;/&gt;', 'OAuth 2.0', 'AWS Signature v4', 'GraphQL', 'JSON']);
+  const locales = vm.runInContext('window.LOSTMAN_LOCALES', appCtx);
+  for (const loc of ['ar', 'fr', 'es', 'de']) {
+    const missing = [...keys].filter((k) => !skip.has(k) && !(k in locales[loc]));
+    check(`i18n: ${loc} covers all keys`, missing.length === 0, missing.slice(0, 5).join(' | '));
+  }
+}
 
 /* ---- cURL import ---- */
 {

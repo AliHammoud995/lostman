@@ -38,21 +38,21 @@ function formatTime(ms) {
 
 function timeAgo(ts) {
   const s = Math.floor((Date.now() - ts) / 1000);
-  if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
+  if (s < 60) return t('just now');
+  if (s < 3600) return t('{n}m ago', { n: Math.floor(s / 60) });
+  if (s < 86400) return t('{n}h ago', { n: Math.floor(s / 3600) });
+  return t('{n}d ago', { n: Math.floor(s / 86400) });
 }
 
 const basename = (p) => String(p).split(/[\\/]/).pop();
 
 function toast(msg) {
-  const t = el('div', 'toast', msg);
-  $('#toastRoot').append(t);
-  requestAnimationFrame(() => t.classList.add('show'));
+  const node = el('div', 'toast', msg);
+  $('#toastRoot').append(node);
+  requestAnimationFrame(() => node.classList.add('show'));
   setTimeout(() => {
-    t.classList.remove('show');
-    setTimeout(() => t.remove(), 300);
+    node.classList.remove('show');
+    setTimeout(() => node.remove(), 300);
   }, 2200);
 }
 
@@ -94,6 +94,7 @@ const shortMethod = (m) => METHOD_SHORT[m] || m;
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
 
 const DEFAULT_SETTINGS = {
+  language: 'en',
   theme: 'dark',
   timeoutMs: 0,
   followRedirects: true,
@@ -289,7 +290,7 @@ function applyEnv(s, extra) {
 function renderEnvSelect() {
   const sel = $('#envSelect');
   sel.innerHTML = '';
-  const none = el('option', null, 'No Environment');
+  const none = el('option', null, t('No Environment'));
   none.value = '';
   sel.append(none);
   for (const env of state.environments) {
@@ -310,10 +311,21 @@ function openSettings() {
   const s = state.settings;
   const body = el('div');
 
+  const fLang = el('div', 'form-field');
+  fLang.append(el('label', null, t('Language')));
+  const langSel = document.createElement('select');
+  for (const [v, label] of [['en', 'English'], ['ar', 'العربية'], ['fr', 'Français'], ['es', 'Español'], ['de', 'Deutsch']]) {
+    const o = el('option', null, label);
+    o.value = v;
+    langSel.append(o);
+  }
+  langSel.value = s.language || 'en';
+  fLang.append(langSel);
+
   const fTheme = el('div', 'form-field');
-  fTheme.append(el('label', null, 'Theme'));
+  fTheme.append(el('label', null, t('Theme')));
   const themeSel = document.createElement('select');
-  for (const [v, label] of [['dark', 'Dark'], ['light', 'Light']]) {
+  for (const [v, label] of [['dark', t('Dark')], ['light', t('Light')]]) {
     const o = el('option', null, label);
     o.value = v;
     themeSel.append(o);
@@ -322,7 +334,7 @@ function openSettings() {
   fTheme.append(themeSel);
 
   const fTimeout = el('div', 'form-field');
-  fTimeout.append(el('label', null, 'Request timeout (milliseconds, 0 = no timeout)'));
+  fTimeout.append(el('label', null, t('Request timeout (milliseconds, 0 = no timeout)')));
   const timeoutInput = document.createElement('input');
   timeoutInput.type = 'number';
   timeoutInput.min = '0';
@@ -334,19 +346,19 @@ function openSettings() {
   const redirCb = document.createElement('input');
   redirCb.type = 'checkbox';
   redirCb.checked = s.followRedirects !== false;
-  cRedir.append(redirCb, el('span', null, 'Follow redirects automatically'));
+  cRedir.append(redirCb, el('span', null, t('Follow redirects automatically')));
 
   const cSsl = el('label', 'form-check');
   const sslCb = document.createElement('input');
   sslCb.type = 'checkbox';
   sslCb.checked = s.verifySsl !== false;
-  cSsl.append(sslCb, el('span', null, 'Verify SSL certificates'));
-  const sslNote = el('div', 'form-note', 'Turn off only for local servers with self-signed certificates.');
+  cSsl.append(sslCb, el('span', null, t('Verify SSL certificates')));
+  const sslNote = el('div', 'form-note', t('Turn off only for local servers with self-signed certificates.'));
 
   const fProxy = el('div', 'form-field');
-  fProxy.append(el('label', null, 'Proxy'));
+  fProxy.append(el('label', null, t('Proxy')));
   const proxySel = document.createElement('select');
-  for (const [v, label] of [['none', 'No proxy'], ['system', 'Use system proxy'], ['manual', 'Manual proxy']]) {
+  for (const [v, label] of [['none', t('No proxy')], ['system', t('Use system proxy')], ['manual', t('Manual proxy')]]) {
     const o = el('option', null, label);
     o.value = v;
     proxySel.append(o);
@@ -355,7 +367,7 @@ function openSettings() {
   fProxy.append(proxySel);
 
   const proxyUrlField = el('div', 'form-field');
-  proxyUrlField.append(el('label', null, 'Proxy URL (http://user:pass@host:port)'));
+  proxyUrlField.append(el('label', null, t('Proxy URL (http://user:pass@host:port)')));
   const proxyUrlInput = document.createElement('input');
   proxyUrlInput.type = 'text';
   proxyUrlInput.spellcheck = false;
@@ -364,7 +376,7 @@ function openSettings() {
   proxyUrlField.append(proxyUrlInput);
 
   const proxyBypassField = el('div', 'form-field');
-  proxyBypassField.append(el('label', null, 'Bypass proxy for (comma-separated hosts)'));
+  proxyBypassField.append(el('label', null, t('Bypass proxy for (comma-separated hosts)')));
   const proxyBypassInput = document.createElement('input');
   proxyBypassInput.type = 'text';
   proxyBypassInput.spellcheck = false;
@@ -380,17 +392,17 @@ function openSettings() {
   syncProxyVisibility();
 
   const fCerts = el('div', 'form-field');
-  fCerts.append(el('label', null, 'Client certificates (mTLS)'));
+  fCerts.append(el('label', null, t('Client certificates (mTLS)')));
   const certList = el('div');
   const renderCerts = () => {
     certList.innerHTML = '';
     if (!state.settings.clientCerts.length) {
-      certList.append(el('div', 'panel-hint', 'None configured. Certificates are matched by hostname and used automatically.'));
+      certList.append(el('div', 'panel-hint', t('None configured. Certificates are matched by hostname and used automatically.')));
       return;
     }
     for (const c of state.settings.clientCerts) {
       const row = el('div', 'cookie-row');
-      row.append(el('span', 'ck-name', c.host), el('span', 'ck-meta', c.type === 'pfx' ? 'PFX/P12' : 'PEM cert + key'));
+      row.append(el('span', 'ck-name', c.host), el('span', 'ck-meta', c.type === 'pfx' ? 'PFX/P12' : t('PEM cert + key')));
       const del = el('button', 'kv-del', '✕');
       del.addEventListener('click', () => {
         state.settings.clientCerts = state.settings.clientCerts.filter((x) => x !== c);
@@ -402,28 +414,28 @@ function openSettings() {
     }
   };
   renderCerts();
-  const addCertBtn = el('button', null, '+ Add certificate…');
+  const addCertBtn = el('button', null, t('+ Add certificate…'));
   addCertBtn.style.marginTop = '6px';
   addCertBtn.addEventListener('click', () => openCertModal(renderCerts));
   fCerts.append(certList, addCertBtn);
 
   const fData = el('div', 'form-field');
-  fData.append(el('label', null, 'Data'));
+  fData.append(el('label', null, t('Data')));
   const dataRow = el('div');
   dataRow.style.display = 'flex';
   dataRow.style.gap = '8px';
-  const backupBtn = el('button', null, 'Export backup…');
-  backupBtn.title = 'Save all collections, history, environments, tabs and settings to a file';
+  const backupBtn = el('button', null, t('Export backup…'));
+  backupBtn.title = t('Save all collections, history, environments, tabs and settings to a file');
   backupBtn.addEventListener('click', async () => {
     const stamp = new Date().toISOString().slice(0, 10);
     const ok = await window.lostman.saveTextFile({
       defaultName: `lostman-backup-${stamp}.json`,
       content: JSON.stringify(snapshot(), null, 2),
     });
-    if (ok) toast('Backup exported');
+    if (ok) toast(t('Backup exported'));
   });
-  const restoreBtn = el('button', null, 'Restore backup…');
-  restoreBtn.title = 'Replace all app data with a previously exported backup';
+  const restoreBtn = el('button', null, t('Restore backup…'));
+  restoreBtn.title = t('Replace all app data with a previously exported backup');
   restoreBtn.addEventListener('click', async () => {
     const f = await window.lostman.openFile();
     if (!f) return;
@@ -436,20 +448,20 @@ function openSettings() {
   dataRow.append(backupBtn, restoreBtn);
   fData.append(dataRow);
 
-  const dataInfo = el('div', 'panel-hint', 'Data file: …');
+  const dataInfo = el('div', 'panel-hint', t('Data file: {path}', { path: '…' }));
   dataInfo.style.marginTop = '8px';
   const portableBtn = el('button', null, '…');
   portableBtn.style.marginTop = '4px';
   const refreshDataInfo = async () => {
     const info = await window.lostman.storeInfo();
-    dataInfo.textContent = 'Data file: ' + info.path;
+    dataInfo.textContent = t('Data file: {path}', { path: info.path });
     if (info.portable) {
-      portableBtn.textContent = 'Switch to standard mode (AppData)';
+      portableBtn.textContent = t('Switch to standard mode (AppData)');
       portableBtn.disabled = false;
     } else {
-      portableBtn.textContent = 'Switch to portable mode (store data next to the app)';
+      portableBtn.textContent = t('Switch to portable mode (store data next to the app)');
       portableBtn.disabled = !info.portableAvailable;
-      portableBtn.title = info.portableAvailable ? '' : 'The app folder is not writable';
+      portableBtn.title = info.portableAvailable ? '' : t('The app folder is not writable');
     }
   };
   portableBtn.addEventListener('click', async () => {
@@ -457,25 +469,27 @@ function openSettings() {
     const r = await window.lostman.setPortable(!info.portable);
     if (r.ok) {
       persist();
-      toast('Data location changed');
+      toast(t('Data location changed'));
     } else {
-      toast(r.error || 'Could not change the data location');
+      toast(r.error || t('Could not change the data location'));
     }
     refreshDataInfo();
   });
   refreshDataInfo();
   fData.append(dataInfo, portableBtn);
 
-  body.append(fTheme, fTimeout, cRedir, cSsl, sslNote, fProxy, proxyUrlField, proxyBypassField, fCerts, fData);
+  body.append(fLang, fTheme, fTimeout, cRedir, cSsl, sslNote, fProxy, proxyUrlField, proxyBypassField, fCerts, fData);
 
-  const m = modal('Settings', body, [
-    { label: 'Cancel' },
+  const m = modal(t('Settings'), body, [
+    { label: t('Cancel') },
     {
-      label: 'Save',
+      label: t('Save'),
       primary: true,
       onClick: () => {
+        const langChanged = (state.settings.language || 'en') !== langSel.value;
         state.settings = {
           ...state.settings,
+          language: langSel.value,
           theme: themeSel.value === 'light' ? 'light' : 'dark',
           timeoutMs: Math.max(0, parseInt(timeoutInput.value, 10) || 0),
           followRedirects: redirCb.checked,
@@ -487,8 +501,15 @@ function openSettings() {
           },
         };
         applyTheme();
+        if (langChanged) {
+          setLocale(state.settings.language);
+          renderEnvSelect();
+          renderSidebar();
+          renderTabsBar();
+          loadEditor();
+        }
         persist();
-        toast('Settings saved');
+        toast(t('Settings saved'));
       },
     },
   ]);
@@ -498,16 +519,16 @@ function openCertModal(onDone) {
   const body = el('div');
 
   const fHost = el('div', 'form-field');
-  fHost.append(el('label', null, 'Hostname (e.g. api.example.com or *.example.com)'));
+  fHost.append(el('label', null, t('Hostname (e.g. api.example.com or *.example.com)')));
   const hostInput = document.createElement('input');
   hostInput.type = 'text';
   hostInput.spellcheck = false;
   fHost.append(hostInput);
 
   const fType = el('div', 'form-field');
-  fType.append(el('label', null, 'Certificate type'));
+  fType.append(el('label', null, t('Certificate type')));
   const typeSel = document.createElement('select');
-  for (const [v, label] of [['pfx', 'PFX / PKCS#12 (.pfx / .p12)'], ['pem', 'PEM certificate + key']]) {
+  for (const [v, label] of [['pfx', 'PFX / PKCS#12 (.pfx / .p12)'], ['pem', t('PEM certificate + key')]]) {
     const o = el('option', null, label);
     o.value = v;
     typeSel.append(o);
@@ -517,7 +538,7 @@ function openCertModal(onDone) {
   const mkFilePick = (labelText) => {
     const field = el('div', 'form-field');
     field.append(el('label', null, labelText));
-    const btn = el('button', 'kv-file-btn', 'Choose file…');
+    const btn = el('button', 'kv-file-btn', t('Choose file…'));
     btn.style.width = '100%';
     let filePath = '';
     btn.addEventListener('click', async () => {
@@ -532,12 +553,12 @@ function openCertModal(onDone) {
     return { field, get path() { return filePath; } };
   };
 
-  const pfxPick = mkFilePick('PFX file');
-  const certPick = mkFilePick('Certificate file (.crt / .pem)');
-  const keyPick = mkFilePick('Private key file (.key / .pem)');
+  const pfxPick = mkFilePick(t('PFX file'));
+  const certPick = mkFilePick(t('Certificate file (.crt / .pem)'));
+  const keyPick = mkFilePick(t('Private key file (.key / .pem)'));
 
   const fPass = el('div', 'form-field');
-  fPass.append(el('label', null, 'Passphrase (optional)'));
+  fPass.append(el('label', null, t('Passphrase (optional)')));
   const passInput = document.createElement('input');
   passInput.type = 'password';
   fPass.append(passInput);
@@ -552,23 +573,23 @@ function openCertModal(onDone) {
 
   body.append(fHost, fType, pfxPick.field, certPick.field, keyPick.field, fPass);
 
-  modal('Add Client Certificate', body, [
-    { label: 'Cancel' },
+  modal(t('Add Client Certificate'), body, [
+    { label: t('Cancel') },
     {
-      label: 'Add',
+      label: t('Add'),
       primary: true,
       onClick: () => {
         const host = hostInput.value.trim();
         if (!host) {
-          toast('Enter a hostname');
+          toast(t('Enter a hostname'));
           return false;
         }
         if (typeSel.value === 'pfx' && !pfxPick.path) {
-          toast('Choose a PFX file');
+          toast(t('Choose a PFX file'));
           return false;
         }
         if (typeSel.value === 'pem' && (!certPick.path || !keyPick.path)) {
-          toast('Choose both certificate and key files');
+          toast(t('Choose both certificate and key files'));
           return false;
         }
         state.settings.clientCerts.push({
@@ -582,7 +603,7 @@ function openCertModal(onDone) {
         });
         persist();
         if (onDone) onDone();
-        toast(`Client certificate added for ${host}`);
+        toast(t('Client certificate added for {host}', { host }));
       },
     },
   ]);
@@ -624,7 +645,7 @@ function kvRowEl(container, rowsRef, row, onChange, opts = {}) {
   const mkInput = (prop, ph) => {
     const i = document.createElement('input');
     i.type = prop === 'value' && opts.secret && row.secret ? 'password' : 'text';
-    i.placeholder = ph;
+    i.placeholder = t(ph);
     i.spellcheck = false;
     i.value = row[prop];
     i.addEventListener('input', () => {
@@ -655,8 +676,8 @@ function kvRowEl(container, rowsRef, row, onChange, opts = {}) {
   }
 
   if (opts.file && row.type === 'file') {
-    const btn = el('button', 'kv-file-btn', row.filePath ? basename(row.filePath) : 'Choose file…');
-    btn.title = row.filePath || 'Choose a file';
+    const btn = el('button', 'kv-file-btn', row.filePath ? basename(row.filePath) : t('Choose file…'));
+    btn.title = row.filePath || t('Choose a file');
     btn.addEventListener('click', async () => {
       const p = await window.lostman.pickFile();
       if (p) {
@@ -794,7 +815,7 @@ function initEditor() {
       activeTab().request.rawBody = ta.value;
       persist();
     } catch {
-      toast('Not valid JSON — cannot beautify');
+      toast(t('Not valid JSON — cannot beautify'));
     }
   });
 
@@ -885,9 +906,9 @@ function updateSendButton() {
   const m = tab.request.method;
   if (m === 'WS' || m === 'SSE') {
     const live = tab.stream && tab.stream.status !== 'closed';
-    $('#btnSend').textContent = live ? 'Disconnect' : 'Connect';
+    $('#btnSend').textContent = live ? t('Disconnect') : t('Connect');
   } else {
-    $('#btnSend').textContent = 'Send';
+    $('#btnSend').textContent = t('Send');
   }
 }
 
@@ -977,9 +998,10 @@ function updateAuthUI() {
     const st = $('#oauthStatus');
     if (a.accessToken) {
       const left = a.expiresAt ? Math.round((a.expiresAt - Date.now()) / 60000) : null;
-      st.textContent = `Token: ${a.accessToken.slice(0, 24)}… ${left != null ? (left > 0 ? `(expires in ${left} min)` : '(expired)') : ''}`;
+      const suffix = left != null ? (left > 0 ? t('(expires in {n} min)', { n: left }) : t('(expired)')) : '';
+      st.textContent = `${t('Token:')} ${a.accessToken.slice(0, 24)}… ${suffix}`;
     } else {
-      st.textContent = 'No token fetched yet.';
+      st.textContent = t('No token fetched yet.');
     }
   }
 }
@@ -1127,7 +1149,7 @@ async function sendActive() {
   }
   const payload = buildPayload(tab);
   if (!payload) {
-    toast('Enter a request URL first');
+    toast(t('Enter a request URL first'));
     return;
   }
   payload.id = uid();
@@ -1135,7 +1157,7 @@ async function sendActive() {
   if (r.preScript.trim()) {
     const pre = runPreScript(r.preScript, payload, null);
     if (!pre.ok) {
-      toast('Pre-request script error: ' + pre.error);
+      toast(t('Pre-request script error: {error}', { error: pre.error }));
       return;
     }
   }
@@ -1195,11 +1217,11 @@ function statusClass(s) {
   return 's-servererr';
 }
 
-const EMPTY_STATE = `
+const emptyStateHtml = () => `
   <div class="resp-empty">
     <img class="empty-logo" src="assets/logo-badge.png" alt="Lostman">
-    <div>Enter a URL and click <b>Send</b> to get a response</div>
-    <div style="font-size:11.5px">Ctrl+Enter sends &nbsp;&middot;&nbsp; Ctrl+S saves &nbsp;&middot;&nbsp; Ctrl+T new tab &nbsp;&middot;&nbsp; Ctrl+F finds</div>
+    <div>${esc(t('Enter a URL and click Send to get a response'))}</div>
+    <div style="font-size:11.5px">${esc(t('Ctrl+Enter sends · Ctrl+S saves · Ctrl+T new tab · Ctrl+F finds · Ctrl+K palette'))}</div>
   </div>`;
 
 function renderResponse() {
@@ -1221,8 +1243,8 @@ function renderResponse() {
     box.innerHTML = '';
     const wrap = el('div', 'resp-loading');
     wrap.append(el('div', 'spinner'));
-    wrap.append(el('div', null, 'Sending request…'));
-    const btn = el('button', null, 'Cancel');
+    wrap.append(el('div', null, t('Sending request…')));
+    const btn = el('button', null, t('Cancel'));
     btn.addEventListener('click', () => cancelSend(tab));
     wrap.append(btn);
     box.append(wrap);
@@ -1233,7 +1255,7 @@ function renderResponse() {
   if (!r) {
     toolbar.classList.add('hidden');
     searchBar.classList.add('hidden');
-    box.innerHTML = EMPTY_STATE;
+    box.innerHTML = emptyStateHtml();
     return;
   }
 
@@ -1242,9 +1264,9 @@ function renderResponse() {
     searchBar.classList.add('hidden');
     box.innerHTML = `
       <div class="resp-error">
-        <h3>${r.aborted ? 'Request cancelled' : 'Could not send request'}</h3>
+        <h3>${esc(r.aborted ? t('Request cancelled') : t('Could not send request'))}</h3>
         <p>${esc(r.error || '')}</p>
-        ${r.aborted ? '' : '<p class="hint">Check the URL, your connection, and that the server is reachable.</p>'}
+        ${r.aborted ? '' : `<p class="hint">${esc(t('Check the URL, your connection, and that the server is reachable.'))}</p>`}
       </div>`;
     return;
   }
@@ -1282,7 +1304,7 @@ function renderResponse() {
   }
 
   box.innerHTML = '';
-  if (r.fromHistory) box.append(el('div', 'diff-meta', `Snapshot from history — ${timeAgo(r.fromHistory)}`));
+  if (r.fromHistory) box.append(el('div', 'diff-meta', t('Snapshot from history — {ago}', { ago: timeAgo(r.fromHistory) })));
   if (tab.respTab === 'headers') renderRespHeaders(box, r);
   else if (tab.respTab === 'tests') renderTestResults(box, r);
   else if (searchOn && tab.search.q !== '') renderSearchView(box, r, tab.search);
@@ -1344,13 +1366,13 @@ function renderRespBody(box, r, view) {
   }
 
   if (r.bodyBase64) {
-    box.innerHTML = `<div class="resp-empty"><div>Binary image response (${formatBytes(r.size)}) &mdash; use <b>Preview</b></div></div>`;
+    box.innerHTML = `<div class="resp-empty"><div>${esc(t('Binary image response ({size}) — use Preview', { size: formatBytes(r.size) }))}</div></div>`;
     return;
   }
 
   const text = r.bodyText ?? '';
   if (text === '') {
-    box.innerHTML = '<div class="resp-empty"><div>(empty response body)</div></div>';
+    box.innerHTML = `<div class="resp-empty"><div>${esc(t('(empty response body)'))}</div></div>`;
     return;
   }
 
@@ -1373,7 +1395,7 @@ function renderRespBody(box, r, view) {
   box.append(pre);
 
   if (r.truncated) {
-    box.append(el('div', 'trunc-note', `Response is ${formatBytes(r.size)} — showing the first 2 MB (Save exports the full body).`));
+    box.append(el('div', 'trunc-note', t('Response is {size} — showing the first 2 MB (Save exports the full body).', { size: formatBytes(r.size) })));
   }
 }
 
@@ -1393,7 +1415,9 @@ function renderSearchView(box, r, search) {
   const n = matches.length;
   if (search.cur >= n) search.cur = 0;
   if (search.cur < 0) search.cur = Math.max(0, n - 1);
-  $('#respSearchCount').textContent = n ? `${search.cur + 1} of ${n}${n === 3000 ? '+' : ''}` : 'No matches';
+  $('#respSearchCount').textContent = n
+    ? t('{cur} of {n}', { cur: search.cur + 1, n: n + (n === 3000 ? '+' : '') })
+    : t('No matches');
 
   const pre = el('pre', 'code');
   if (!n) {
@@ -1500,7 +1524,7 @@ function initRespActions() {
     const r = activeTab().response;
     if (!r || !r.ok) return;
     navigator.clipboard.writeText(r.bodyText ?? '');
-    toast('Response body copied');
+    toast(t('Response body copied'));
   });
   $('#btnSaveResp').addEventListener('click', async () => {
     const r = activeTab().response;
@@ -1510,17 +1534,17 @@ function initRespActions() {
       defaultName: suggestFilename(r),
       fallbackText: r.bodyText ?? '',
     });
-    if (ok) toast('Response saved to file');
+    if (ok) toast(t('Response saved to file'));
   });
   $('#btnPinResp').addEventListener('click', () => {
     const tab = activeTab();
     const r = tab.response;
     if (!r || !r.ok || r.bodyBase64) {
-      toast('Only text responses can be pinned');
+      toast(t('Only text responses can be pinned'));
       return;
     }
     tab.pinned = { text: prettyText(r.bodyText ?? ''), label: `${r.status} · ${formatTime(r.timeMs)}`, ts: Date.now() };
-    toast('Response pinned — send again and use Diff to compare');
+    toast(t('Response pinned — send again and use Diff to compare'));
     renderResponse();
   });
 }
@@ -1589,14 +1613,23 @@ function renderDiffView(box, tab, r) {
   const current = prettyText(r.bodyText ?? '');
   const pinnedText = tab.pinned.text;
   if (current.length > 400_000 || pinnedText.length > 400_000) {
-    box.append(el('div', 'resp-error', 'Responses are too large to diff.'));
+    box.append(el('div', 'resp-error', t('Responses are too large to diff.')));
     return;
   }
-  box.append(el('div', 'diff-meta', `Comparing pinned (${tab.pinned.label}, ${timeAgo(tab.pinned.ts)}) with the current response — red was removed, green was added`));
+  box.append(
+    el(
+      'div',
+      'diff-meta',
+      t('Comparing pinned ({label}, {ago}) with the current response — red was removed, green was added', {
+        label: tab.pinned.label,
+        ago: timeAgo(tab.pinned.ts),
+      })
+    )
+  );
   const { prefix, ops, suffix } = diffLines(pinnedText, current);
   const changed = ops.filter(([op]) => op !== ' ').length;
   if (!changed) {
-    box.append(el('div', 'diff-meta', 'No differences.'));
+    box.append(el('div', 'diff-meta', t('No differences.')));
   }
   const pre = el('pre', 'code');
   const parts = [];
@@ -1711,7 +1744,7 @@ function initSidebar() {
     b.addEventListener('click', () => {
       state.sideView = b.dataset.sideview;
       $$('.side-tabs button').forEach((x) => x.classList.toggle('active', x === b));
-      $('#sideSearch').placeholder = state.sideView === 'collections' ? 'Filter collections…' : 'Filter history…';
+      $('#sideSearch').placeholder = state.sideView === 'collections' ? t('Filter collections…') : t('Filter history…');
       renderSidebar();
     })
   );
@@ -1719,7 +1752,7 @@ function initSidebar() {
     state.sideFilter = e.target.value.trim();
     renderSidebar();
   });
-  $('#sideSearch').placeholder = 'Filter collections…';
+  $('#sideSearch').placeholder = t('Filter collections…');
 }
 
 const matchesReq = (saved, q) =>
@@ -1735,23 +1768,23 @@ function renderSidebar() {
   const q = state.sideFilter.toLowerCase();
 
   if (state.sideView === 'collections') {
-    const add = el('button', null, '+ New Collection');
+    const add = el('button', null, t('+ New Collection'));
     add.addEventListener('click', () =>
-      textPrompt('New Collection', 'Collection name', '', (name) => {
+      textPrompt(t('New Collection'), t('Collection name'), '', (name) => {
         state.collections.push({ id: uid(), name, open: true, requests: [], folders: [] });
         persist();
         renderSidebar();
       })
     );
-    const imp = el('button', null, 'Import');
-    imp.title = 'Import Postman collection / environment, OpenAPI spec, cURL, or Lostman backup';
+    const imp = el('button', null, t('Import'));
+    imp.title = t('Import Postman collection / environment, OpenAPI spec, cURL, or Lostman backup');
     imp.addEventListener('click', openImportModal);
     actions.append(add, imp);
 
     if (!state.collections.length) {
       list.append(
         Object.assign(el('div', 'side-empty'), {
-          innerHTML: 'No collections yet.<br>Click <b>Save</b> on a request<br>to add it to a collection.',
+          innerHTML: t('No collections yet.<br>Click <b>Save</b> on a request<br>to add it to a collection.'),
         })
       );
       return;
@@ -1764,12 +1797,12 @@ function renderSidebar() {
         shown++;
       }
     }
-    if (!shown) list.append(el('div', 'side-empty', 'No matches.'));
+    if (!shown) list.append(el('div', 'side-empty', t('No matches.')));
   } else {
     if (state.history.length) {
-      const clear = el('button', null, 'Clear History');
+      const clear = el('button', null, t('Clear History'));
       clear.addEventListener('click', () => {
-        if (confirm('Clear all request history?')) {
+        if (confirm(t('Clear all request history?'))) {
           state.history = [];
           persist();
           renderSidebar();
@@ -1781,11 +1814,11 @@ function renderSidebar() {
       ? state.history.filter((h) => (h.request.url || '').toLowerCase().includes(q) || h.request.method.toLowerCase().includes(q))
       : state.history;
     if (!state.history.length) {
-      list.append(Object.assign(el('div', 'side-empty'), { innerHTML: 'Requests you send<br>will show up here.' }));
+      list.append(Object.assign(el('div', 'side-empty'), { innerHTML: t('Requests you send<br>will show up here.') }));
       return;
     }
     if (!items.length) {
-      list.append(el('div', 'side-empty', 'No matches.'));
+      list.append(el('div', 'side-empty', t('No matches.')));
       return;
     }
     for (const h of items) list.append(historyEl(h));
@@ -1819,10 +1852,10 @@ function collectionEl(col, q) {
   const acts = el('span', 'col-actions');
 
   const addFolder = el('button', null, '📁+');
-  addFolder.title = 'New folder';
+  addFolder.title = t('New folder');
   addFolder.addEventListener('click', (e) => {
     e.stopPropagation();
-    textPrompt('New Folder', 'Folder name', '', (n) => {
+    textPrompt(t('New Folder'), t('Folder name'), '', (n) => {
       col.folders = col.folders || [];
       col.folders.push({ id: uid(), name: n, open: true, requests: [] });
       col.open = true;
@@ -1832,10 +1865,10 @@ function collectionEl(col, q) {
   });
 
   const rename = el('button', null, '✎');
-  rename.title = 'Rename collection';
+  rename.title = t('Rename collection');
   rename.addEventListener('click', (e) => {
     e.stopPropagation();
-    textPrompt('Rename Collection', 'Collection name', col.name, (n) => {
+    textPrompt(t('Rename Collection'), t('Collection name'), col.name, (n) => {
       col.name = n;
       persist();
       renderSidebar();
@@ -1843,10 +1876,10 @@ function collectionEl(col, q) {
   });
 
   const del = el('button', null, '✕');
-  del.title = 'Delete collection';
+  del.title = t('Delete collection');
   del.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!confirm(`Delete collection "${col.name}" and its ${total} request(s)?`)) return;
+    if (!confirm(t('Delete collection "{name}" and its {n} request(s)?', { name: col.name, n: total }))) return;
     state.collections = state.collections.filter((c) => c !== col);
     for (const t of state.tabs) if (t.savedRef?.collectionId === col.id) t.savedRef = null;
     persist();
@@ -1854,7 +1887,7 @@ function collectionEl(col, q) {
   });
 
   const exp = el('button', null, '⇩');
-  exp.title = 'Export as Postman v2.1 collection';
+  exp.title = t('Export as Postman v2.1 collection');
   exp.addEventListener('click', async (e) => {
     e.stopPropagation();
     const safeName = col.name.replace(/[\\/:*?"<>|]/g, '-');
@@ -1862,11 +1895,11 @@ function collectionEl(col, q) {
       defaultName: `${safeName}.postman_collection.json`,
       content: JSON.stringify(exportPostman(col), null, 2),
     });
-    if (ok) toast(`Exported "${col.name}"`);
+    if (ok) toast(t('Exported "{name}"', { name: col.name }));
   });
 
   const run = el('button', null, '▶');
-  run.title = 'Run collection';
+  run.title = t('Run collection');
   run.addEventListener('click', (e) => {
     e.stopPropagation();
     openRunnerModal(col);
@@ -1901,10 +1934,10 @@ function folderEl(col, f, requests, forceOpen) {
   const acts = el('span', 'col-actions');
 
   const rename = el('button', null, '✎');
-  rename.title = 'Rename folder';
+  rename.title = t('Rename folder');
   rename.addEventListener('click', (e) => {
     e.stopPropagation();
-    textPrompt('Rename Folder', 'Folder name', f.name, (n) => {
+    textPrompt(t('Rename Folder'), t('Folder name'), f.name, (n) => {
       f.name = n;
       persist();
       renderSidebar();
@@ -1912,10 +1945,10 @@ function folderEl(col, f, requests, forceOpen) {
   });
 
   const del = el('button', null, '✕');
-  del.title = 'Delete folder';
+  del.title = t('Delete folder');
   del.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!confirm(`Delete folder "${f.name}" and its ${f.requests.length} request(s)?`)) return;
+    if (!confirm(t('Delete folder "{name}" and its {n} request(s)?', { name: f.name, n: f.requests.length }))) return;
     col.folders = col.folders.filter((x) => x !== f);
     for (const t of state.tabs) if (t.savedRef?.folderId === f.id) t.savedRef = null;
     persist();
@@ -1956,12 +1989,12 @@ function reqRowEl(col, folder, saved) {
   const acts = el('span', 'col-actions');
 
   const rename = el('button', null, '✎');
-  rename.title = 'Rename request';
+  rename.title = t('Rename request');
   rename.addEventListener('click', (e) => {
     e.stopPropagation();
-    textPrompt('Rename Request', 'Request name', saved.name, (n) => {
+    textPrompt(t('Rename Request'), t('Request name'), saved.name, (n) => {
       saved.name = n;
-      for (const t of state.tabs) if (t.savedRef?.requestId === saved.id) t.name = n;
+      for (const tb of state.tabs) if (tb.savedRef?.requestId === saved.id) tb.name = n;
       persist();
       renderSidebar();
       renderTabsBar();
@@ -1969,21 +2002,21 @@ function reqRowEl(col, folder, saved) {
   });
 
   const dup = el('button', null, '⧉');
-  dup.title = 'Duplicate request';
+  dup.title = t('Duplicate request');
   dup.addEventListener('click', (e) => {
     e.stopPropagation();
     const list = folder ? folder.requests : col.requests;
     const idx = list.indexOf(saved);
-    list.splice(idx + 1, 0, { id: uid(), name: saved.name + ' copy', request: structuredClone(saved.request) });
+    list.splice(idx + 1, 0, { id: uid(), name: saved.name + ' ' + t('copy'), request: structuredClone(saved.request) });
     persist();
     renderSidebar();
   });
 
   const del = el('button', null, '✕');
-  del.title = 'Delete request';
+  del.title = t('Delete request');
   del.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!confirm(`Delete request "${saved.name}"?`)) return;
+    if (!confirm(t('Delete request "{name}"?', { name: saved.name }))) return;
     const list = folder ? folder.requests : col.requests;
     const idx = list.indexOf(saved);
     if (idx > -1) list.splice(idx, 1);
@@ -2044,7 +2077,7 @@ function historyEl(h) {
   const row = el('div', 'hist-row');
   const chip = el('span', 'method-chip m-' + h.request.method, shortMethod(h.request.method));
   const main = el('div', 'hist-main');
-  const url = el('div', 'hist-url', h.request.url || '(no URL)');
+  const url = el('div', 'hist-url', h.request.url || t('(no URL)'));
   const sub = el('div', 'hist-sub');
   sub.append(el('span', null, timeAgo(h.ts)));
   if (h.status) {
@@ -2052,7 +2085,7 @@ function historyEl(h) {
     st.style.color = h.status < 400 ? 'var(--ok)' : 'var(--err)';
     sub.append(st);
   } else if (h.error) {
-    const st = el('span', null, 'failed');
+    const st = el('span', null, t('failed'));
     st.style.color = 'var(--err)';
     sub.append(st);
   }
@@ -2060,7 +2093,7 @@ function historyEl(h) {
 
   const acts = el('span', 'col-actions');
   const del = el('button', null, '✕');
-  del.title = 'Remove from history';
+  del.title = t('Remove from history');
   del.addEventListener('click', (e) => {
     e.stopPropagation();
     state.history = state.history.filter((x) => x !== h);
@@ -2099,7 +2132,7 @@ function saveActive() {
       found.saved.request = cleanRequest(tab.request);
       persist();
       renderSidebar();
-      toast(`Saved to "${found.col.name}"`);
+      toast(t('Saved to "{name}"', { name: found.col.name }));
       return;
     }
     tab.savedRef = null;
@@ -2114,9 +2147,9 @@ function saveAsActive() {
 function defaultRequestName(r) {
   try {
     const u = new URL(applyEnv(splitUrl(r.url)[0]));
-    return (u.pathname !== '/' && u.pathname) || u.hostname || 'New Request';
+    return (u.pathname !== '/' && u.pathname) || u.hostname || t('New Request');
   } catch {
-    return splitUrl(r.url)[0] || 'New Request';
+    return splitUrl(r.url)[0] || t('New Request');
   }
 }
 
@@ -2124,35 +2157,35 @@ function openSaveModal(tab, saveAs = false) {
   const body = el('div');
 
   const f1 = el('div', 'form-field');
-  f1.append(el('label', null, 'Request name'));
+  f1.append(el('label', null, t('Request name')));
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
-  nameInput.value = (tab.name ? (saveAs ? tab.name + ' copy' : tab.name) : defaultRequestName(tab.request));
+  nameInput.value = (tab.name ? (saveAs ? tab.name + ' ' + t('copy') : tab.name) : defaultRequestName(tab.request));
   f1.append(nameInput);
 
   const f2 = el('div', 'form-field');
-  f2.append(el('label', null, 'Collection'));
+  f2.append(el('label', null, t('Collection')));
   const colSel = document.createElement('select');
   for (const c of state.collections) {
     const o = el('option', null, c.name);
     o.value = c.id;
     colSel.append(o);
   }
-  const oNew = el('option', null, '+ Create new collection');
+  const oNew = el('option', null, t('+ Create new collection'));
   oNew.value = '__new';
   colSel.append(oNew);
   if (!state.collections.length) colSel.value = '__new';
   f2.append(colSel);
 
   const f3 = el('div', 'form-field');
-  f3.append(el('label', null, 'New collection name'));
+  f3.append(el('label', null, t('New collection name')));
   const newColInput = document.createElement('input');
   newColInput.type = 'text';
-  newColInput.value = 'My Collection';
+  newColInput.value = t('My Collection');
   f3.append(newColInput);
 
   const f4 = el('div', 'form-field');
-  f4.append(el('label', null, 'Folder'));
+  f4.append(el('label', null, t('Folder')));
   const folderSel = document.createElement('select');
   f4.append(folderSel);
 
@@ -2162,7 +2195,7 @@ function openSaveModal(tab, saveAs = false) {
     const col = state.collections.find((c) => c.id === colSel.value);
     const folders = (!isNew && col && col.folders) || [];
     folderSel.innerHTML = '';
-    const root = el('option', null, '(collection root)');
+    const root = el('option', null, t('(collection root)'));
     root.value = '';
     folderSel.append(root);
     for (const f of folders) {
@@ -2177,22 +2210,22 @@ function openSaveModal(tab, saveAs = false) {
 
   body.append(f1, f2, f3, f4);
 
-  const m = modal(saveAs ? 'Save Request As' : 'Save Request', body, [
-    { label: 'Cancel' },
+  const m = modal(saveAs ? t('Save Request As') : t('Save Request'), body, [
+    { label: t('Cancel') },
     {
-      label: 'Save',
+      label: t('Save'),
       primary: true,
       onClick: () => {
         const name = nameInput.value.trim();
         if (!name) {
-          toast('Enter a request name');
+          toast(t('Enter a request name'));
           return false;
         }
         let col;
         if (colSel.value === '__new') {
           const cn = newColInput.value.trim();
           if (!cn) {
-            toast('Enter a collection name');
+            toast(t('Enter a collection name'));
             return false;
           }
           col = { id: uid(), name: cn, open: true, requests: [], folders: [] };
@@ -2209,7 +2242,7 @@ function openSaveModal(tab, saveAs = false) {
         persist();
         renderSidebar();
         renderTabsBar();
-        toast(`Saved to "${col.name}"`);
+        toast(t('Saved to "{name}"', { name: col.name }));
       },
     },
   ]);
@@ -2220,45 +2253,45 @@ function openSaveModal(tab, saveAs = false) {
 
 /* ============================== tabs ============================== */
 
-function tabLabel(t) {
-  if (t.name) return t.name;
-  const u = t.request.url.trim();
-  if (!u) return 'Untitled Request';
+function tabLabel(tab) {
+  if (tab.name) return tab.name;
+  const u = tab.request.url.trim();
+  if (!u) return t('Untitled Request');
   return u.replace(/^https?:\/\//i, '');
 }
 
 function renderTabsBar() {
   const list = $('#tabsList');
   list.innerHTML = '';
-  for (const t of state.tabs) {
-    const d = el('div', 'tab' + (t.id === state.activeTabId ? ' active' : ''));
-    d.title = t.request.url || '';
-    const m = el('span', 'tab-method m-' + t.request.method, shortMethod(t.request.method));
-    const n = el('span', 'tab-name', tabLabel(t));
+  for (const tb of state.tabs) {
+    const d = el('div', 'tab' + (tb.id === state.activeTabId ? ' active' : ''));
+    d.title = tb.request.url || '';
+    const m = el('span', 'tab-method m-' + tb.request.method, shortMethod(tb.request.method));
+    const n = el('span', 'tab-name', tabLabel(tb));
     const x = el('button', 'tab-close', '✕');
-    x.title = 'Close tab (Ctrl+W)';
+    x.title = t('Close tab (Ctrl+W)');
     x.addEventListener('click', (e) => {
       e.stopPropagation();
-      closeTab(t.id);
+      closeTab(tb.id);
     });
     d.append(m, n, x);
-    d.addEventListener('click', () => switchTab(t.id));
+    d.addEventListener('click', () => switchTab(tb.id));
     d.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      tabContextMenu(t, e.clientX, e.clientY);
+      tabContextMenu(tb, e.clientX, e.clientY);
     });
     list.append(d);
   }
 }
 
-function tabContextMenu(t, x, y) {
+function tabContextMenu(tab, x, y) {
   ctxMenu(x, y, [
     {
-      label: 'Rename',
+      label: t('Rename'),
       onClick: () =>
-        textPrompt('Rename Request', 'Name', t.name || tabLabel(t), (v) => {
-          t.name = v;
-          const found = findSaved(t.savedRef);
+        textPrompt(t('Rename Request'), t('Name'), tab.name || tabLabel(tab), (v) => {
+          tab.name = v;
+          const found = findSaved(tab.savedRef);
           if (found) {
             found.saved.name = v;
             renderSidebar();
@@ -2268,23 +2301,23 @@ function tabContextMenu(t, x, y) {
         }),
     },
     {
-      label: 'Duplicate',
+      label: t('Duplicate'),
       onClick: () => {
-        const copy = makeTab(structuredClone(t.request), t.name ? t.name + ' copy' : null);
-        state.tabs.splice(state.tabs.indexOf(t) + 1, 0, copy);
+        const copy = makeTab(structuredClone(tab.request), tab.name ? tab.name + ' ' + t('copy') : null);
+        state.tabs.splice(state.tabs.indexOf(tab) + 1, 0, copy);
         switchTab(copy.id);
       },
     },
-    { label: 'Save As…', onClick: () => openSaveModal(t, true) },
+    { label: t('Save As…'), onClick: () => openSaveModal(tab, true) },
     '-',
-    { label: 'Close', onClick: () => closeTab(t.id) },
+    { label: t('Close'), onClick: () => closeTab(tab.id) },
     {
-      label: 'Close Others',
+      label: t('Close Others'),
       danger: true,
       onClick: () => {
-        for (const other of state.tabs) if (other !== t) cancelSend(other);
-        state.tabs = [t];
-        state.activeTabId = t.id;
+        for (const other of state.tabs) if (other !== tab) cancelSend(other);
+        state.tabs = [tab];
+        state.activeTabId = tab.id;
         renderTabsBar();
         loadEditor();
         persist();
@@ -2374,14 +2407,14 @@ function textPrompt(title, label, initial, onOk) {
   f.append(input);
   body.append(f);
   const m = modal(title, body, [
-    { label: 'Cancel' },
+    { label: t('Cancel') },
     {
-      label: 'OK',
+      label: t('OK'),
       primary: true,
       onClick: () => {
         const v = input.value.trim();
         if (!v) {
-          toast('Name cannot be empty');
+          toast(t('Name cannot be empty'));
           return false;
         }
         onOk(v);
@@ -2463,11 +2496,11 @@ function openEnvManager() {
 
   function refresh() {
     left.innerHTML = '';
-    const add = el('button', null, '+ New');
+    const add = el('button', null, t('+ New'));
     add.style.width = '100%';
     add.style.marginBottom = '8px';
     add.addEventListener('click', () => {
-      const env = { id: uid(), name: 'New Environment', vars: [] };
+      const env = { id: uid(), name: t('New Environment'), vars: [] };
       state.environments.push(env);
       selId = env.id;
       persist();
@@ -2476,7 +2509,7 @@ function openEnvManager() {
     });
     left.append(add);
 
-    const gItem = el('div', 'env-list-item' + (selId === '__globals' ? ' sel' : ''), '⚙ Globals');
+    const gItem = el('div', 'env-list-item' + (selId === '__globals' ? ' sel' : ''), '⚙ ' + t('Globals'));
     gItem.addEventListener('click', () => {
       selId = '__globals';
       refresh();
@@ -2498,17 +2531,17 @@ function openEnvManager() {
     if (!isGlobals && !env) {
       right.append(
         Object.assign(el('div', 'env-empty'), {
-          innerHTML: 'No environment selected.<br>Create one to define <b>{{variables}}</b><br>usable in URLs, headers, bodies and auth.',
+          innerHTML: t('No environment selected.<br>Create one to define <b>{{variables}}</b><br>usable in URLs, headers, bodies and auth.'),
         })
       );
       return;
     }
 
     if (isGlobals) {
-      right.append(el('div', 'panel-hint', 'Global variables are always available; the active environment overrides them.'));
+      right.append(el('div', 'panel-hint', t('Global variables are always available; the active environment overrides them.')));
     } else {
       const f = el('div', 'form-field');
-      f.append(el('label', null, 'Environment name'));
+      f.append(el('label', null, t('Environment name')));
       const nameInput = document.createElement('input');
       nameInput.type = 'text';
       nameInput.value = env.name;
@@ -2521,7 +2554,7 @@ function openEnvManager() {
       right.append(f);
     }
 
-    right.append(el('div', 'panel-hint', 'Variables — use them anywhere as {{name}}. The 👁 toggle masks secrets on screen.'));
+    right.append(el('div', 'panel-hint', t('Variables — use them anywhere as {{name}}. The 👁 toggle masks secrets on screen.')));
     const kvBox = el('div', 'kv');
     right.append(kvBox);
     const rowsRef = isGlobals ? () => state.globals : () => env.vars;
@@ -2534,7 +2567,7 @@ function openEnvManager() {
 
     if (!isGlobals) {
       const activate = el('button', state.activeEnvId === env.id ? null : 'primary',
-        state.activeEnvId === env.id ? 'Active ✓' : 'Set Active');
+        state.activeEnvId === env.id ? t('Active ✓') : t('Set Active'));
       activate.addEventListener('click', () => {
         state.activeEnvId = state.activeEnvId === env.id ? null : env.id;
         persist();
@@ -2544,8 +2577,8 @@ function openEnvManager() {
       controls.append(activate);
     }
 
-    const imp = el('button', null, 'Import .env…');
-    imp.title = 'Merge KEY=VALUE pairs from a .env file into these variables';
+    const imp = el('button', null, t('Import .env…'));
+    imp.title = t('Merge KEY=VALUE pairs from a .env file into these variables');
     imp.addEventListener('click', async () => {
       const f = await window.lostman.openFile({ filters: [{ name: 'Env files', extensions: ['env', '*'] }] });
       if (!f) return;
@@ -2555,7 +2588,7 @@ function openEnvManager() {
       }
       const pairs = parseDotEnv(f.content);
       if (!pairs.length) {
-        toast('No KEY=VALUE pairs found in that file');
+        toast(t('No KEY=VALUE pairs found in that file'));
         return;
       }
       const rows = rowsRef();
@@ -2566,14 +2599,14 @@ function openEnvManager() {
       }
       persist();
       refresh();
-      toast(`Imported ${pairs.length} variable(s) from ${f.name}`);
+      toast(t('Imported {n} variable(s) from {name}', { n: pairs.length, name: f.name }));
     });
     controls.append(imp);
 
     if (!isGlobals) {
-      const del = el('button', null, 'Delete');
+      const del = el('button', null, t('Delete'));
       del.addEventListener('click', () => {
-        if (!confirm(`Delete environment "${env.name}"?`)) return;
+        if (!confirm(t('Delete environment "{name}"?', { name: env.name }))) return;
         state.environments = state.environments.filter((e) => e !== env);
         if (state.activeEnvId === env.id) state.activeEnvId = null;
         selId = '__globals';
@@ -2588,7 +2621,7 @@ function openEnvManager() {
   }
 
   refresh();
-  modal('Environments', layout, [{ label: 'Close', primary: true }]);
+  modal(t('Environments'), layout, [{ label: t('Close'), primary: true }]);
 }
 
 /* ============================== response toolbar events ============================== */
@@ -2667,23 +2700,24 @@ function paletteItems() {
       });
     for (const f of col.folders || []) for (const saved of f.requests) addReq(saved, f);
     for (const saved of col.requests) addReq(saved, null);
-    items.push({ label: `Run collection: ${col.name}`, run: () => openRunnerModal(col) });
+    items.push({ label: t('Run collection: {name}', { name: col.name }), run: () => openRunnerModal(col) });
   }
-  for (const t of state.tabs) {
-    if (t.id !== state.activeTabId) items.push({ label: `Switch to tab: ${tabLabel(t)}`, method: t.request.method, run: () => switchTab(t.id) });
+  for (const tb of state.tabs) {
+    if (tb.id !== state.activeTabId)
+      items.push({ label: t('Switch to tab: {name}', { name: tabLabel(tb) }), method: tb.request.method, run: () => switchTab(tb.id) });
   }
   items.push(
-    { label: 'New Request Tab', hint: 'Ctrl+T', run: newTab },
-    { label: 'New Window', hint: 'Ctrl+Shift+N', run: () => window.lostman.newWindow() },
-    { label: 'Send Request', hint: 'Ctrl+Enter', run: sendActive },
-    { label: 'Save Request', hint: 'Ctrl+S', run: saveActive },
-    { label: 'Generate Code Snippet', run: openCodeModal },
-    { label: 'Import (Postman / OpenAPI / cURL / backup)', run: openImportModal },
-    { label: 'Manage Environments', run: openEnvManager },
-    { label: 'Manage Cookies', run: openCookieModal },
-    { label: 'Open Settings', run: openSettings },
+    { label: t('New Request Tab'), hint: 'Ctrl+T', run: newTab },
+    { label: t('New Window'), hint: 'Ctrl+Shift+N', run: () => window.lostman.newWindow() },
+    { label: t('Send Request'), hint: 'Ctrl+Enter', run: sendActive },
+    { label: t('Save Request'), hint: 'Ctrl+S', run: saveActive },
+    { label: t('Generate Code Snippet'), run: openCodeModal },
+    { label: t('Import (Postman / OpenAPI / cURL / backup)'), run: openImportModal },
+    { label: t('Manage Environments'), run: openEnvManager },
+    { label: t('Manage Cookies'), run: openCookieModal },
+    { label: t('Open Settings'), run: openSettings },
     {
-      label: 'Toggle Light / Dark Theme',
+      label: t('Toggle Light / Dark Theme'),
       run: () => {
         state.settings.theme = state.settings.theme === 'light' ? 'dark' : 'light';
         applyTheme();
@@ -2701,7 +2735,7 @@ function openPalette() {
   const input = document.createElement('input');
   input.type = 'text';
   input.spellcheck = false;
-  input.placeholder = 'Search requests, tabs and actions…';
+  input.placeholder = t('Search requests, tabs and actions…');
   const list = el('div', 'palette-list');
   box.append(input, list);
   overlay.append(box);
@@ -2733,7 +2767,7 @@ function openPalette() {
       });
       list.append(row);
     });
-    if (!filtered.length) list.append(el('div', 'palette-empty', 'No matches'));
+    if (!filtered.length) list.append(el('div', 'palette-empty', t('No matches')));
   }
   input.addEventListener('input', () => {
     const q = input.value.trim();
@@ -2905,7 +2939,7 @@ function openCookieModal() {
     state.settings.cookiesEnabled = cb.checked;
     persist();
   });
-  toggle.append(cb, el('span', null, 'Automatically capture Set-Cookie responses and send matching cookies'));
+  toggle.append(cb, el('span', null, t('Automatically capture Set-Cookie responses and send matching cookies')));
   body.append(toggle);
 
   const listBox = el('div');
@@ -2915,14 +2949,14 @@ function openCookieModal() {
     state.cookies = state.cookies.filter((c) => c.expires == null || c.expires > Date.now());
     listBox.innerHTML = '';
     if (!state.cookies.length) {
-      listBox.append(el('div', 'env-empty', 'No cookies stored yet — responses with Set-Cookie headers will appear here.'));
+      listBox.append(el('div', 'env-empty', t('No cookies stored yet — responses with Set-Cookie headers will appear here.')));
       return;
     }
     const domains = [...new Set(state.cookies.map((c) => c.domain))].sort();
     for (const d of domains) {
       const head = el('div', 'cookie-domain');
       head.append(el('span', null, d));
-      const clearBtn = el('button', 'ghost', '✕ clear');
+      const clearBtn = el('button', 'ghost', t('✕ clear'));
       clearBtn.addEventListener('click', () => {
         state.cookies = state.cookies.filter((c) => c.domain !== d);
         persist();
@@ -2936,7 +2970,7 @@ function openCookieModal() {
         const meta = [];
         if (c.path !== '/') meta.push(c.path);
         if (c.secure) meta.push('secure');
-        meta.push(c.expires ? 'expires ' + new Date(c.expires).toLocaleString() : 'session');
+        meta.push(c.expires ? t('expires {when}', { when: new Date(c.expires).toLocaleString() }) : t('session'));
         row.append(el('span', 'ck-meta', meta.join(' · ')));
         const del = el('button', 'kv-del', '✕');
         del.addEventListener('click', () => {
@@ -2951,18 +2985,18 @@ function openCookieModal() {
   }
   refresh();
 
-  modal('Cookies', body, [
+  modal(t('Cookies'), body, [
     {
-      label: 'Clear All',
+      label: t('Clear All'),
       onClick: () => {
-        if (!confirm('Delete all stored cookies?')) return false;
+        if (!confirm(t('Delete all stored cookies?'))) return false;
         state.cookies = [];
         persist();
         refresh();
         return false;
       },
     },
-    { label: 'Close', primary: true },
+    { label: t('Close'), primary: true },
   ]);
 }
 
@@ -3143,7 +3177,7 @@ async function oauthFetchToken() {
   const a = tab.request.auth;
   const tokenUrl = applyEnv(a.tokenUrl).trim();
   if (!tokenUrl) {
-    toast('Enter a Token URL first');
+    toast(t('Enter a Token URL first'));
     return;
   }
   const form = [];
@@ -3152,7 +3186,7 @@ async function oauthFetchToken() {
   if (a.grant === 'auth_code') {
     const authUrl = applyEnv(a.authUrl).trim();
     if (!authUrl) {
-      toast('Enter an Auth URL first');
+      toast(t('Enter an Auth URL first'));
       return;
     }
     const verifier = randomString(64);
@@ -3172,7 +3206,7 @@ async function oauthFetchToken() {
       redirectUri: applyEnv(a.redirectUri),
     });
     if (!result || result.error || !result.code) {
-      toast('Authorization failed: ' + (result?.error || 'no code returned'));
+      toast(t('Authorization failed: {error}', { error: result?.error || t('no code returned') }));
       return;
     }
     form.push(
@@ -3193,7 +3227,7 @@ async function oauthFetchToken() {
     }
   }
 
-  toast('Requesting token…');
+  toast(t('Requesting token…'));
   const res = await window.lostman.send({
     id: uid(),
     method: 'POST',
@@ -3206,7 +3240,7 @@ async function oauthFetchToken() {
   });
 
   if (!res.ok) {
-    toast('Token request failed: ' + (res.error || 'network error'));
+    toast(t('Token request failed: {error}', { error: res.error || t('network error') }));
     return;
   }
   let data = null;
@@ -3216,7 +3250,12 @@ async function oauthFetchToken() {
     /* not JSON */
   }
   if (res.status >= 400 || !data || !data.access_token) {
-    toast(`Token endpoint returned ${res.status}: ${(data && (data.error_description || data.error)) || 'no access_token in response'}`);
+    toast(
+      t('Token endpoint returned {status}: {error}', {
+        status: res.status,
+        error: (data && (data.error_description || data.error)) || t('no access_token in response'),
+      })
+    );
     return;
   }
   a.accessToken = data.access_token;
@@ -3224,7 +3263,7 @@ async function oauthFetchToken() {
   a.expiresAt = data.expires_in ? Date.now() + data.expires_in * 1000 : 0;
   persist();
   updateAuthUI();
-  toast('Access token stored — it will be sent as an Authorization header');
+  toast(t('Access token stored — it will be sent as an Authorization header'));
 }
 
 /* ============================== {{variable}} autocomplete ============================== */
@@ -3327,14 +3366,14 @@ function toggleStream(tab) {
   if (tab.stream && tab.stream.status !== 'closed') {
     window.lostman.streamClose({ id: tab.stream.id });
     tab.stream.status = 'closed';
-    tab.stream.messages.push({ dir: 'sys', text: 'Disconnected', ts: Date.now() });
+    tab.stream.messages.push({ dir: 'sys', text: t('Disconnected'), ts: Date.now() });
     updateSendButton();
     renderResponse();
     return;
   }
   const payload = buildPayloadFromRequest(tab.request, null);
   if (!payload) {
-    toast('Enter a URL first');
+    toast(t('Enter a URL first'));
     return;
   }
   const kind = tab.request.method === 'WS' ? 'ws' : 'sse';
@@ -3342,7 +3381,7 @@ function toggleStream(tab) {
   if (kind === 'ws') url = url.replace(/^http/i, 'ws');
   else url = url.replace(/^ws(s?):\/\//i, 'http$1://');
   const id = uid();
-  tab.stream = { id, kind, status: 'connecting', messages: [{ dir: 'sys', text: `Connecting to ${url}…`, ts: Date.now() }], input: '' };
+  tab.stream = { id, kind, status: 'connecting', messages: [{ dir: 'sys', text: t('Connecting to {url}…', { url }), ts: Date.now() }], input: '' };
   updateSendButton();
   renderResponse();
   window.lostman.streamOpen({ id, kind, url, headers: payload.headers });
@@ -3354,14 +3393,14 @@ function handleStreamEvent(ev) {
   const st = tab.stream;
   if (ev.type === 'open') {
     st.status = 'open';
-    st.messages.push({ dir: 'sys', text: 'Connected' + (ev.data ? ' — ' + ev.data : ''), ts: ev.ts });
+    st.messages.push({ dir: 'sys', text: t('Connected') + (ev.data ? ' — ' + ev.data : ''), ts: ev.ts });
   } else if (ev.type === 'message') {
     st.messages.push({ dir: 'in', text: ev.data, ts: ev.ts });
   } else if (ev.type === 'error') {
-    st.messages.push({ dir: 'sys', text: 'Error: ' + ev.data, ts: ev.ts });
+    st.messages.push({ dir: 'sys', text: t('Error: {error}', { error: ev.data }), ts: ev.ts });
   } else if (ev.type === 'close') {
     st.status = 'closed';
-    st.messages.push({ dir: 'sys', text: 'Closed' + (ev.data ? ' — ' + ev.data : ''), ts: ev.ts });
+    st.messages.push({ dir: 'sys', text: t('Closed') + (ev.data ? ' — ' + ev.data : ''), ts: ev.ts });
   }
   if (st.messages.length > 500) st.messages.splice(0, st.messages.length - 500);
   if (tab === activeTab()) {
@@ -3376,11 +3415,11 @@ function renderStreamConsole(box, tab) {
   const wrap = el('div', 'stream-console');
 
   const status = el('div', 'stream-status');
-  const pill = el('span', 'pill s-' + (st ? st.status : 'closed'), st ? st.status : 'not connected');
+  const pill = el('span', 'pill s-' + (st ? st.status : 'closed'), st ? t(st.status) : t('not connected'));
   status.append(pill);
   status.append(el('span', null, tab.request.method === 'WS' ? 'WebSocket' : 'Server-Sent Events'));
   if (st && st.messages.length) {
-    const clear = el('button', 'ghost', 'Clear');
+    const clear = el('button', 'ghost', t('Clear'));
     clear.addEventListener('click', () => {
       st.messages = [];
       renderResponse();
@@ -3393,7 +3432,9 @@ function renderStreamConsole(box, tab) {
   if (!st || !st.messages.length) {
     log.append(
       Object.assign(el('div', 'resp-empty'), {
-        innerHTML: `<div>Enter a ${tab.request.method === 'WS' ? 'ws:// or wss://' : 'URL'} and click <b>Connect</b></div>`,
+        innerHTML: `<div>${esc(
+          tab.request.method === 'WS' ? t('Enter a ws:// or wss:// URL and click Connect') : t('Enter a URL and click Connect')
+        )}</div>`,
       })
     );
   } else {
@@ -3411,7 +3452,7 @@ function renderStreamConsole(box, tab) {
     const inputRow = el('div', 'stream-input');
     const input = document.createElement('input');
     input.type = 'text';
-    input.placeholder = st && st.status === 'open' ? 'Message to send…' : 'Connect first to send messages';
+    input.placeholder = st && st.status === 'open' ? t('Message to send…') : t('Connect first to send messages');
     input.disabled = !st || st.status !== 'open';
     input.value = (st && st.input) || '';
     input.addEventListener('input', () => {
@@ -3427,7 +3468,7 @@ function renderStreamConsole(box, tab) {
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') sendMsg();
     });
-    const btn = el('button', 'primary', 'Send');
+    const btn = el('button', 'primary', t('Send'));
     btn.disabled = !st || st.status !== 'open';
     btn.addEventListener('click', sendMsg);
     inputRow.append(input, btn);
@@ -3479,13 +3520,19 @@ function openRunnerModal(col) {
   for (const f of col.folders || []) for (const s of f.requests) seq.push(s);
   for (const s of col.requests) seq.push(s);
   if (!seq.length) {
-    toast('This collection has no requests to run');
+    toast(t('This collection has no requests to run'));
     return;
   }
 
   const body = el('div');
   body.style.minWidth = '540px';
-  body.append(el('div', 'panel-hint', `${seq.length} request(s) will run in order. Optionally iterate over a CSV or JSON-array data file — each row's columns become {{variables}}.`));
+  body.append(
+    el(
+      'div',
+      'panel-hint',
+      t("{n} request(s) will run in order. Optionally iterate over a CSV or JSON-array data file — each row's columns become {{variables}}.", { n: seq.length })
+    )
+  );
 
   let dataRows = null;
   const fileRow = el('div');
@@ -3493,8 +3540,8 @@ function openRunnerModal(col) {
   fileRow.style.gap = '8px';
   fileRow.style.alignItems = 'center';
   fileRow.style.marginBottom = '10px';
-  const fileBtn = el('button', null, 'Choose data file…');
-  const fileLabel = el('span', 'panel-hint', 'no data file (single run)');
+  const fileBtn = el('button', null, t('Choose data file…'));
+  const fileLabel = el('span', 'panel-hint', t('no data file (single run)'));
   fileLabel.style.margin = '0';
   fileBtn.addEventListener('click', async () => {
     const f = await window.lostman.openFile({ filters: [{ name: 'Data', extensions: ['csv', 'json'] }, { name: 'All Files', extensions: ['*'] }] });
@@ -3514,17 +3561,17 @@ function openRunnerModal(col) {
       dataRows = null;
     }
     if (!dataRows || !dataRows.length) {
-      fileLabel.textContent = 'could not parse that file (expected CSV with a header row, or a JSON array of objects)';
+      fileLabel.textContent = t('could not parse that file (expected CSV with a header row, or a JSON array of objects)');
       dataRows = null;
     } else {
-      fileLabel.textContent = `${f.name} — ${dataRows.length} iteration(s)`;
+      fileLabel.textContent = t('{name} — {n} iteration(s)', { name: f.name, n: dataRows.length });
     }
   });
   fileRow.append(fileBtn, fileLabel);
   body.append(fileRow);
 
   const delayRow = el('div', 'form-field');
-  delayRow.append(el('label', null, 'Delay between requests (ms)'));
+  delayRow.append(el('label', null, t('Delay between requests (ms)')));
   const delayInput = document.createElement('input');
   delayInput.type = 'number';
   delayInput.min = '0';
@@ -3532,7 +3579,7 @@ function openRunnerModal(col) {
   delayRow.append(delayInput);
   body.append(delayRow);
 
-  const runBtn = el('button', 'primary', 'Run');
+  const runBtn = el('button', 'primary', t('Run'));
   body.append(runBtn);
 
   const results = el('div', 'run-results');
@@ -3542,13 +3589,15 @@ function openRunnerModal(col) {
   const ui = { stopped: false };
 
   runBtn.addEventListener('click', async () => {
-    if (runBtn.textContent === 'Stop') {
+    if (runBtn.dataset.running === '1') {
       ui.stopped = true;
-      runBtn.textContent = 'Run';
+      runBtn.dataset.running = '';
+      runBtn.textContent = t('Run');
       return;
     }
     ui.stopped = false;
-    runBtn.textContent = 'Stop';
+    runBtn.dataset.running = '1';
+    runBtn.textContent = t('Stop');
     results.innerHTML = '';
     summary.textContent = '';
     const rows = dataRows && dataRows.length ? dataRows : [null];
@@ -3570,14 +3619,14 @@ function openRunnerModal(col) {
         results.scrollTop = results.scrollHeight;
 
         if (!payload || r.method === 'WS' || r.method === 'SSE') {
-          rowEl.append(el('span', 'rr-status', 'skipped'));
+          rowEl.append(el('span', 'rr-status', t('skipped')));
           continue;
         }
         payload.id = uid();
         if (r.preScript && r.preScript.trim()) {
           const pre = runPreScript(r.preScript, payload, rows[it]);
           if (!pre.ok) {
-            rowEl.append(Object.assign(el('span', 'rr-status', 'pre-script error'), { style: 'color: var(--err)' }));
+            rowEl.append(Object.assign(el('span', 'rr-status', t('pre-script error')), { style: 'color: var(--err)' }));
             failCount++;
             continue;
           }
@@ -3595,13 +3644,13 @@ function openRunnerModal(col) {
             const passed = tr.filter((t) => t.ok).length;
             testPass += passed;
             testFail += tr.length - passed;
-            const tl = el('span', 'ck-meta', `tests ${passed}/${tr.length}`);
+            const tl = el('span', 'ck-meta', t('tests {a}/{b}', { a: passed, b: tr.length }));
             if (passed < tr.length) tl.style.color = 'var(--err)';
             rowEl.append(tl);
           }
         } else {
           failCount++;
-          rowEl.append(Object.assign(el('span', 'rr-status', res.aborted ? 'cancelled' : 'failed'), { style: 'color: var(--err)' }));
+          rowEl.append(Object.assign(el('span', 'rr-status', res.aborted ? t('cancelled') : t('failed')), { style: 'color: var(--err)' }));
           rowEl.append(el('span', 'ck-meta', res.error || ''));
         }
         const delay = Math.max(0, parseInt(delayInput.value, 10) || 0);
@@ -3610,15 +3659,16 @@ function openRunnerModal(col) {
       if (ui.stopped || !results.isConnected) break;
     }
 
-    runBtn.textContent = 'Run';
-    const bits = [`${okCount} sent`, `${failCount} failed`];
-    if (testPass + testFail) bits.push(`tests: ${testPass} passed, ${testFail} failed`);
-    bits.push(`in ${formatTime(Date.now() - started)}`);
-    summary.textContent = (ui.stopped ? 'Stopped — ' : 'Done — ') + bits.join(' · ');
+    runBtn.dataset.running = '';
+    runBtn.textContent = t('Run');
+    const bits = [t('{n} sent', { n: okCount }), t('{n} failed', { n: failCount })];
+    if (testPass + testFail) bits.push(t('tests: {a} passed, {b} failed', { a: testPass, b: testFail }));
+    bits.push(t('in {time}', { time: formatTime(Date.now() - started) }));
+    summary.textContent = (ui.stopped ? t('Stopped') : t('Done')) + ' — ' + bits.join(' · ');
     renderSidebar();
   });
 
-  modal(`Run "${col.name}"`, body, [{ label: 'Close' }]);
+  modal(t('Run "{name}"', { name: col.name }), body, [{ label: t('Close') }]);
 }
 
 /* ============================== import: detection ============================== */
@@ -3628,7 +3678,7 @@ function importFromJsonText(text) {
   try {
     obj = JSON.parse(text);
   } catch {
-    toast('Not valid JSON (YAML specs must be converted to JSON first)');
+    toast(t('Not valid JSON (YAML specs must be converted to JSON first)'));
     return false;
   }
   if (obj && obj.info && Array.isArray(obj.item)) {
@@ -3640,7 +3690,7 @@ function importFromJsonText(text) {
     }
     persist();
     renderSidebar();
-    toast(`Imported "${col.name}" — ${count} request(s)${env ? ' + variables environment' : ''}`);
+    toast(t('Imported "{name}" — {n} request(s)', { name: col.name, n: count }) + (env ? ' + ' + t('variables environment') : ''));
     return true;
   }
   if (obj && (obj.openapi || obj.swagger)) {
@@ -3648,41 +3698,42 @@ function importFromJsonText(text) {
     state.collections.push(col);
     persist();
     renderSidebar();
-    toast(`Imported "${col.name}" — ${count} request(s) from the spec`);
+    toast(t('Imported "{name}" — {n} request(s) from the spec', { name: col.name, n: count }));
     return true;
   }
   if (obj && Array.isArray(obj.values) && obj._postman_variable_scope) {
     const env = {
       id: uid(),
-      name: obj.name || 'Imported environment',
+      name: obj.name || t('Imported environment'),
       vars: obj.values.filter((v) => v.key).map((v) => ({ ...newKvRow(), key: v.key, value: v.value ?? '', enabled: v.enabled !== false })),
     };
     state.environments.push(env);
     persist();
     renderEnvSelect();
-    toast(`Imported environment "${env.name}" (${env.vars.length} variables)`);
+    toast(t('Imported environment "{name}" ({n} variables)', { name: env.name, n: env.vars.length }));
     return true;
   }
   if (obj && Array.isArray(obj.collections) && Array.isArray(obj.tabs)) {
-    if (!confirm('Restore this Lostman backup? It will REPLACE all current collections, history, environments, tabs and settings.')) return false;
+    if (!confirm(t('Restore this Lostman backup? It will REPLACE all current collections, history, environments, tabs and settings.')))
+      return false;
     restoreBackup(obj);
-    toast('Backup restored');
+    toast(t('Backup restored'));
     return true;
   }
-  toast('Unrecognized format — expected a Postman collection/environment, OpenAPI JSON spec, or Lostman backup');
+  toast(t('Unrecognized format — expected a Postman collection/environment, OpenAPI JSON spec, or Lostman backup'));
   return false;
 }
 
 function openImportModal() {
   const body = el('div');
   body.append(
-    el('div', 'panel-hint', 'Import a Postman collection (v2.x) or environment, an OpenAPI 3 / Swagger 2 spec (JSON), or a Lostman backup.')
+    el('div', 'panel-hint', t('Import a Postman collection (v2.x) or environment, an OpenAPI 3 / Swagger 2 spec (JSON), or a Lostman backup.'))
   );
-  const fileBtn = el('button', 'primary', 'Choose file…');
+  const fileBtn = el('button', 'primary', t('Choose file…'));
   fileBtn.style.marginBottom = '14px';
   body.append(fileBtn);
 
-  body.append(el('div', 'panel-hint', 'Or paste a cURL command to open it as a new request tab:'));
+  body.append(el('div', 'panel-hint', t('Or paste a cURL command to open it as a new request tab:')));
   const ta = document.createElement('textarea');
   ta.rows = 5;
   ta.spellcheck = false;
@@ -3691,11 +3742,11 @@ function openImportModal() {
   ta.style.fontSize = '12px';
   ta.placeholder = 'curl https://api.example.com/users -H "Authorization: Bearer {{token}}"';
   body.append(ta);
-  const curlBtn = el('button', null, 'Import cURL');
+  const curlBtn = el('button', null, t('Import cURL'));
   curlBtn.style.marginTop = '8px';
   body.append(curlBtn);
 
-  const m = modal('Import', body, [{ label: 'Close' }]);
+  const m = modal(t('Import'), body, [{ label: t('Close') }]);
 
   fileBtn.addEventListener('click', async () => {
     const f = await window.lostman.openFile();
@@ -3714,9 +3765,9 @@ function openImportModal() {
       state.tabs.push(tab);
       m.close();
       switchTab(tab.id);
-      toast('cURL imported into a new tab');
+      toast(t('cURL imported into a new tab'));
     } catch (err) {
-      toast(err.message || 'Could not parse the cURL command');
+      toast(err.message || t('Could not parse the cURL command'));
     }
   });
 }
@@ -4120,7 +4171,7 @@ function tokenizeCurl(s) {
 
 function parseCurl(text) {
   let s = String(text || '').trim();
-  if (!/^curl\b/i.test(s)) throw new Error('The command must start with "curl"');
+  if (!/^curl\b/i.test(s)) throw new Error(t('The command must start with "curl"'));
   s = s.replace(/\\\s*\r?\n/g, ' ').replace(/`\s*\r?\n/g, ' ').replace(/\^\s*\r?\n/g, ' ');
   const tokens = tokenizeCurl(s);
 
@@ -4176,7 +4227,7 @@ function parseCurl(text) {
     } else if (!t.startsWith('-') && !url) url = t;
   }
 
-  if (!url) throw new Error('No URL found in the cURL command');
+  if (!url) throw new Error(t('No URL found in the cURL command'));
 
   if (isForm) {
     req.bodyMode = 'formdata';
@@ -4406,12 +4457,12 @@ function genCode(lang, p) {
 function openCodeModal() {
   const payload = buildPayload(activeTab());
   if (!payload) {
-    toast('Enter a request URL first');
+    toast(t('Enter a request URL first'));
     return;
   }
   const body = el('div');
   const f = el('div', 'form-field');
-  f.append(el('label', null, 'Language'));
+  f.append(el('label', null, t('Language')));
   const sel = document.createElement('select');
   for (const [v, label] of CODE_LANGS) {
     const o = el('option', null, label);
@@ -4437,17 +4488,17 @@ function openCodeModal() {
   });
   render();
 
-  modal('Code Snippet', body, [
+  modal(t('Code Snippet'), body, [
     {
-      label: 'Copy',
+      label: t('Copy'),
       primary: true,
       onClick: () => {
         navigator.clipboard.writeText(pre.textContent);
-        toast('Snippet copied to clipboard');
+        toast(t('Snippet copied to clipboard'));
         return false;
       },
     },
-    { label: 'Close' },
+    { label: t('Close') },
   ]);
 }
 
@@ -4508,6 +4559,7 @@ async function init() {
   if (!state.tabs.length) state.tabs.push(makeTab());
   if (!state.tabs.some((t) => t.id === state.activeTabId)) state.activeTabId = state.tabs[0].id;
 
+  setLocale(state.settings.language || 'en');
   applyTheme();
   initEditor();
   initSidebar();
