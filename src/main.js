@@ -110,8 +110,26 @@ ipcMain.handle('store:load', async () => {
   }
 });
 
+// Once per day, snapshot the data file into backups/ and keep the last 7.
+function rotateBackups(file) {
+  try {
+    if (!fsSync.existsSync(file)) return;
+    const dir = path.join(path.dirname(file), 'backups');
+    const stamp = new Date().toISOString().slice(0, 10);
+    const target = path.join(dir, `lostman-${stamp}.json`);
+    if (fsSync.existsSync(target)) return;
+    fsSync.mkdirSync(dir, { recursive: true });
+    fsSync.copyFileSync(file, target);
+    const files = fsSync.readdirSync(dir).filter((f) => /^lostman-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
+    while (files.length > 7) fsSync.unlinkSync(path.join(dir, files.shift()));
+  } catch {
+    /* best effort */
+  }
+}
+
 ipcMain.handle('store:save', async (e, data) => {
   const file = dataFile();
+  rotateBackups(file);
   const tmp = file + '.tmp';
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(tmp, JSON.stringify(data));

@@ -51,13 +51,12 @@ Ideas for future versions, roughly ordered by value vs. effort. Check items off 
 - [x] **History with snapshots** — the last 25 history entries store the response (up to 64 KB);
       clicking them restores both request and response.
 
-## Tier 4 — Polish & distribution
+## Tier 4 — Polish & distribution  ✅ shipped in v1.3.1–v1.5
 
 - [x] **Linux builds** — AppImage + .deb targets (`npm run dist:linux`); the app itself is
       fully cross-platform. *(shipped in v1.3.1)*
 - [x] **CI release pipeline** — GitHub Actions builds Windows + Linux packages on every
       `v*` tag and attaches them to a GitHub Release. *(shipped in v1.3.1)*
-
 - [x] **Proxy support** — none / system proxy / manual URL (with auth) + bypass list;
       HTTP requests go via the proxy, HTTPS through a CONNECT tunnel. *(v1.4)*
 - [x] **Client certificates** — per-hostname mTLS (PFX or PEM cert+key, wildcard hosts),
@@ -70,7 +69,7 @@ Ideas for future versions, roughly ordered by value vs. effort. Check items off 
       AppImage builds) and offers a restart when an update is downloaded. *(v1.4)*
 - [x] **Command palette** — Ctrl+K fuzzy-searches saved requests, tabs and actions. *(v1.4)*
 - [x] **Multi-window** — Ctrl+Shift+N or the palette; shared data syncs between windows. *(v1.4)*
-- [x] **Tests & linting** — 63 unit tests (`npm test`) + ESLint/Prettier, enforced by a CI
+- [x] **Tests & linting** — unit tests (`npm test`) + ESLint/Prettier, enforced by a CI
       workflow on every push. *(v1.4)*
 - [x] **Localization** — full i18n system (English keys with graceful fallback) shipping
       English, العربية (RTL), Français, Español and Deutsch; language picker in Settings;
@@ -79,23 +78,23 @@ Ideas for future versions, roughly ordered by value vs. effort. Check items off 
       and a shared Electron-free HTTP engine; packaged as a .vsix by the release workflow.
       *(v1.5)*
 
-## Tier 5 — Quality of life  (planned, v1.6)
+## Tier 5 — Quality of life  ✅ shipped in v1.6
 
-- [ ] **Welcome collection** — first launch seeds a "Learn Lostman" collection with working
-      example requests: GET/POST, auth, a test script, and `{{res.last.body…}}` chaining.
-- [ ] **Shortcut cheat sheet** — `Ctrl+/` overlay listing every keyboard shortcut.
-- [ ] **JSON tree view for responses** — collapsible expand/fold like DevTools; click a value
+- [x] **Welcome collection** — first launch seeds a "Learn Lostman" collection with working
+      example requests: GET/POST, auth, a test script, and `{{res.GetUuid.body…}}` chaining.
+- [x] **Shortcut cheat sheet** — `Ctrl+/` overlay listing every keyboard shortcut.
+- [x] **JSON tree view for responses** — collapsible expand/fold like DevTools; click a value
       to copy it, or copy its path as a ready-made `{{res.Name.body.path}}` chain reference.
-- [ ] **Real JSON body editor** — live syntax highlighting, inline "invalid JSON at line N"
+- [x] **Real JSON body editor** — live syntax highlighting, inline "invalid JSON (line N)"
       feedback, auto-indent and bracket pairing (dependency-free overlay technique).
-- [ ] **Bulk edit for params/headers** — paste `key: value` lines in a text mode; autocomplete
+- [x] **Bulk edit for params/headers** — paste `key: value` lines in a text mode; autocomplete
       for common header names and Content-Type values.
-- [ ] **Inline rename & tab reorder** — double-click to rename tabs/sidebar items in place;
+- [x] **Inline rename & tab reorder** — double-click to rename tabs/sidebar items in place;
       drag tabs to reorder; unsaved-changes dot with revert-to-saved.
-- [ ] **Smarter URL bar** — recent-URL suggestions from history; pasting a whole `curl …`
+- [x] **Smarter URL bar** — recent-URL suggestions from history; pasting a whole `curl …`
       command imports it directly.
-- [ ] **Delete with Undo** — replace confirm popups with instant delete + a 5-second Undo toast.
-- [ ] **Comfort details** — Ctrl+= / Ctrl+- zoom, a Retry button on failed responses, and
+- [x] **Delete with Undo** — instant delete + a 5-second Undo toast instead of confirm popups.
+- [x] **Comfort details** — Ctrl+= / Ctrl+- zoom, a Retry button on failed responses, and
       automatic rotating backups (keep the last 7 days).
 
 ## Beyond

@@ -56,6 +56,26 @@ function toast(msg) {
   }, 2200);
 }
 
+function undoToast(msg, undoFn) {
+  const node = el('div', 'toast');
+  node.append(el('span', null, msg));
+  const btn = el('button', 'toast-undo', t('Undo'));
+  let used = false;
+  btn.addEventListener('click', () => {
+    if (used) return;
+    used = true;
+    node.remove();
+    undoFn();
+  });
+  node.append(btn);
+  $('#toastRoot').append(node);
+  requestAnimationFrame(() => node.classList.add('show'));
+  setTimeout(() => {
+    node.classList.remove('show');
+    setTimeout(() => node.remove(), 300);
+  }, 5000);
+}
+
 function splitUrl(url) {
   const i = String(url).indexOf('?');
   return i === -1 ? [String(url), ''] : [String(url).slice(0, i), String(url).slice(i + 1)];
@@ -103,6 +123,7 @@ const DEFAULT_SETTINGS = {
   cookiesEnabled: true,
   proxy: { mode: 'none', url: '', bypass: '' },
   clientCerts: [],
+  zoom: 1,
 };
 
 function blankRequest() {
@@ -653,7 +674,13 @@ function kvRowEl(container, rowsRef, row, onChange, opts = {}) {
       grow();
       onChange();
     });
-    if (opts.ac !== false) attachAC(i);
+    if (opts.ac !== false) {
+      const provs = [];
+      if (opts.headerSuggest && prop === 'key') provs.push(headerNameProvider);
+      if (opts.headerSuggest && prop === 'value') provs.push(contentTypeProviderFor(row));
+      provs.push(varProvider);
+      attachAC(i, provs);
+    }
     return i;
   };
 
@@ -722,6 +749,59 @@ function kvRowEl(container, rowsRef, row, onChange, opts = {}) {
 }
 
 const cleanRows = (rows) => rows.filter((r) => r.key.trim() !== '' || r.value.trim() !== '' || r.filePath);
+
+/* ============================== bulk edit ============================== */
+
+function rowsToBulk(rows) {
+  return cleanRows(rows)
+    .map((r) => (r.enabled === false ? '// ' : '') + r.key + ': ' + r.value)
+    .join('\n');
+}
+
+function bulkToRows(text) {
+  const rows = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    let s = line.trim();
+    if (!s) continue;
+    let enabled = true;
+    if (s.startsWith('//')) {
+      enabled = false;
+      s = s.slice(2).trim();
+    }
+    const ci = s.indexOf(':');
+    const key = (ci === -1 ? s : s.slice(0, ci)).trim();
+    const value = ci === -1 ? '' : s.slice(ci + 1).trim();
+    if (key) rows.push({ ...newKvRow(), key, value, enabled });
+  }
+  return rows;
+}
+
+function resetBulk(btnId, taId, kvId) {
+  $(taId).classList.add('hidden');
+  $(kvId).classList.remove('hidden');
+  $(btnId).textContent = t('Bulk Edit');
+}
+
+function initBulk(btnId, taId, kvId, rowsRef, onApply) {
+  $(btnId).addEventListener('click', () => {
+    const ta = $(taId);
+    const kv = $(kvId);
+    const btn = $(btnId);
+    if (ta.classList.contains('hidden')) {
+      ta.value = rowsToBulk(rowsRef());
+      kv.classList.add('hidden');
+      ta.classList.remove('hidden');
+      btn.textContent = t('Table');
+      ta.placeholder = t('One key: value per line. Prefix a line with // to disable it.');
+      ta.focus();
+    } else {
+      const rows = rowsRef();
+      rows.splice(0, rows.length, ...bulkToRows(ta.value));
+      resetBulk(btnId, taId, kvId);
+      onApply();
+    }
+  });
+}
 
 function cleanRequest(r) {
   const out = structuredClone(r);
@@ -799,11 +879,13 @@ function initEditor() {
 
   $('#rawType').addEventListener('change', (e) => {
     activeTab().request.rawType = e.target.value;
+    updateRawHighlight();
     persist();
   });
 
   $('#rawBody').addEventListener('input', (e) => {
     activeTab().request.rawBody = e.target.value;
+    updateRawHighlight();
     updateEditorMeta();
     persist();
   });
@@ -813,10 +895,25 @@ function initEditor() {
     try {
       ta.value = JSON.stringify(JSON.parse(ta.value), null, 2);
       activeTab().request.rawBody = ta.value;
+      updateRawHighlight();
       persist();
     } catch {
       toast(t('Not valid JSON — cannot beautify'));
     }
+  });
+
+  initRawEditor();
+  initBulk('#btnBulkParams', '#bulkParams', '#kvParams', () => activeTab().request.params, () => {
+    renderKv($('#kvParams'), () => activeTab().request.params, paramsChanged);
+    paramsChanged();
+  });
+  initBulk('#btnBulkHeaders', '#bulkHeaders', '#kvHeaders', () => activeTab().request.headers, () => {
+    renderKv($('#kvHeaders'), () => activeTab().request.headers, () => {
+      updateEditorMeta();
+      persist();
+    }, { headerSuggest: true });
+    updateEditorMeta();
+    persist();
   });
 
   $('#gqlQuery').addEventListener('input', (e) => {
@@ -891,9 +988,27 @@ function initEditor() {
     toast('Token cleared');
   });
 
-  for (const id of ['#url', '#authToken', '#authUser', '#authPass', '#authKeyName', '#authKeyValue', '#rawBody', '#gqlQuery', '#gqlVariables', '#oauthTokenUrl', '#oauthAuthUrl', '#oauthScope']) {
+  for (const id of ['#authToken', '#authUser', '#authPass', '#authKeyName', '#authKeyValue', '#rawBody', '#gqlQuery', '#gqlVariables', '#oauthTokenUrl', '#oauthAuthUrl', '#oauthScope']) {
     attachAC($(id));
   }
+  attachAC($('#url'), [varProvider, urlHistoryProvider]);
+
+  $('#url').addEventListener('paste', (e) => {
+    const text = (e.clipboardData && e.clipboardData.getData('text')) || '';
+    if (!/^\s*curl\s/i.test(text)) return;
+    e.preventDefault();
+    try {
+      const req = parseCurl(text.trim());
+      const tab = activeTab();
+      tab.request = normalizeRequest(req);
+      loadEditor();
+      renderTabsBar();
+      persist();
+      toast(t('cURL command imported'));
+    } catch (err) {
+      toast(err.message || t('Could not parse the cURL command'));
+    }
+  });
 
   $('#btnSend').addEventListener('click', sendActive);
   $('#btnSave').addEventListener('click', saveActive);
@@ -925,13 +1040,16 @@ function loadEditor() {
     persist();
   };
   renderKv($('#kvParams'), () => activeTab().request.params, paramsChanged);
-  renderKv($('#kvHeaders'), () => activeTab().request.headers, kvChanged);
+  renderKv($('#kvHeaders'), () => activeTab().request.headers, kvChanged, { headerSuggest: true });
   renderKv($('#kvForm'), () => activeTab().request.formItems, kvChanged, { file: true });
+  resetBulk('#btnBulkParams', '#bulkParams', '#kvParams');
+  resetBulk('#btnBulkHeaders', '#bulkHeaders', '#kvHeaders');
 
   const radio = document.querySelector(`input[name="bodyMode"][value="${r.bodyMode}"]`);
   if (radio) radio.checked = true;
   $('#rawType').value = r.rawType;
   $('#rawBody').value = r.rawBody;
+  updateRawHighlight();
   $('#gqlQuery').value = r.gqlQuery;
   $('#gqlVariables').value = r.gqlVariables;
   $('#preScript').value = r.preScript;
@@ -975,11 +1093,102 @@ function syncAuthInputs() {
 function updateBodyUI() {
   const mode = activeTab().request.bodyMode;
   $('#bodyNone').classList.toggle('hidden', mode !== 'none');
-  $('#rawBody').classList.toggle('hidden', mode !== 'raw');
+  $('#rawBodyWrap').classList.toggle('hidden', mode !== 'raw');
   $('#rawType').classList.toggle('hidden', mode !== 'raw');
   $('#btnBeautify').classList.toggle('hidden', mode !== 'raw');
   $('#kvForm').classList.toggle('hidden', mode !== 'formdata' && mode !== 'urlencoded');
   $('#gqlArea').classList.toggle('hidden', mode !== 'graphql');
+}
+
+/* ============================== JSON body editor ============================== */
+
+function updateRawHighlight() {
+  const r = activeTab().request;
+  const ta = $('#rawBody');
+  const pre = $('#rawBodyHl');
+  const status = $('#jsonStatus');
+  const text = ta.value;
+
+  if (r.rawType === 'json' && text.length < 300_000) {
+    pre.innerHTML = highlightJSON(text) + '\n';
+  } else {
+    pre.textContent = text + '\n';
+  }
+  pre.scrollTop = ta.scrollTop;
+  pre.scrollLeft = ta.scrollLeft;
+
+  if (r.rawType !== 'json' || text.trim() === '') {
+    status.textContent = '';
+    status.className = 'json-status';
+    return;
+  }
+  try {
+    JSON.parse(text);
+    status.textContent = '✓ ' + t('Valid JSON');
+    status.className = 'json-status ok';
+  } catch (err) {
+    const msg = String((err && err.message) || err);
+    const pm = msg.match(/position (\d+)/);
+    let lineInfo = '';
+    if (pm) {
+      const line = text.slice(0, parseInt(pm[1], 10)).split('\n').length;
+      lineInfo = t(' (line {n})', { n: line });
+    }
+    status.textContent = '✗ ' + t('Invalid JSON') + lineInfo;
+    status.className = 'json-status err';
+  }
+}
+
+function initRawEditor() {
+  const ta = $('#rawBody');
+  ta.addEventListener('scroll', () => {
+    const pre = $('#rawBodyHl');
+    pre.scrollTop = ta.scrollTop;
+    pre.scrollLeft = ta.scrollLeft;
+  });
+  ta.addEventListener('keydown', (e) => {
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const commit = () => {
+      activeTab().request.rawBody = ta.value;
+      updateRawHighlight();
+      updateEditorMeta();
+      persist();
+    };
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      ta.setRangeText('  ', start, end, 'end');
+      commit();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const before = ta.value.slice(0, start);
+      const lineStart = before.lastIndexOf('\n') + 1;
+      const indent = (before.slice(lineStart).match(/^[ \t]*/) || [''])[0];
+      const prevChar = before.trimEnd().slice(-1);
+      const nextChar = ta.value.slice(end, end + 1);
+      if ((prevChar === '{' && nextChar === '}') || (prevChar === '[' && nextChar === ']')) {
+        ta.setRangeText('\n' + indent + '  ' + '\n' + indent, start, end, 'start');
+        const cursor = start + 1 + indent.length + 2;
+        ta.setSelectionRange(cursor, cursor);
+      } else {
+        const extra = prevChar === '{' || prevChar === '[' ? '  ' : '';
+        ta.setRangeText('\n' + indent + extra, start, end, 'end');
+      }
+      commit();
+    } else if ((e.key === '}' || e.key === ']' || e.key === '"') && start === end && ta.value.slice(start, start + 1) === e.key) {
+      e.preventDefault();
+      ta.setSelectionRange(start + 1, start + 1);
+    } else if ((e.key === '{' || e.key === '[' || e.key === '"') && start === end) {
+      const nextChar = ta.value.slice(start, start + 1);
+      if (nextChar === '' || nextChar === '\n' || nextChar === ' ' || nextChar === ',' || nextChar === '}' || nextChar === ']') {
+        e.preventDefault();
+        const close = e.key === '{' ? '}' : e.key === '[' ? ']' : '"';
+        ta.setRangeText(e.key + close, start, end, 'start');
+        ta.setSelectionRange(start + 1, start + 1);
+        commit();
+      }
+    }
+  });
 }
 
 function updateAuthUI() {
@@ -1268,6 +1477,11 @@ function renderResponse() {
         <p>${esc(r.error || '')}</p>
         ${r.aborted ? '' : `<p class="hint">${esc(t('Check the URL, your connection, and that the server is reachable.'))}</p>`}
       </div>`;
+    const retry = el('button', 'primary', t('Retry'));
+    retry.style.margin = '0 auto';
+    retry.style.display = 'block';
+    retry.addEventListener('click', sendActive);
+    box.querySelector('.resp-error').append(retry);
     return;
   }
 
@@ -1376,27 +1590,97 @@ function renderRespBody(box, r, view) {
     return;
   }
 
-  const pre = el('pre', 'code');
+  let rendered = false;
   if (view === 'pretty' && text.length < 1_000_000) {
-    let parsed = null;
+    let parsed;
+    let isJson = true;
     try {
       parsed = JSON.parse(text);
     } catch {
-      /* not JSON */
+      isJson = false;
     }
-    if (parsed !== null || text.trim() === 'null') {
-      pre.innerHTML = highlightJSON(JSON.stringify(parsed, null, 2));
-    } else {
-      pre.textContent = text;
+    if (isJson) {
+      renderJsonTree(box, parsed);
+      rendered = true;
     }
-  } else {
-    pre.textContent = text;
   }
-  box.append(pre);
+  if (!rendered) {
+    const pre = el('pre', 'code');
+    pre.textContent = text;
+    box.append(pre);
+  }
 
   if (r.truncated) {
     box.append(el('div', 'trunc-note', t('Response is {size} — showing the first 2 MB (Save exports the full body).', { size: formatBytes(r.size) })));
   }
+}
+
+/* ============================== JSON tree view ============================== */
+
+function chainRefFor(pathArr) {
+  const name = activeTab().name || 'last';
+  return `{{res.${name}.body${pathArr.length ? '.' + pathArr.join('.') : ''}}}`;
+}
+
+function jsonTreeNode(key, value, path, depth) {
+  const wrap = el('div');
+  const row = el('div', 'jt-row');
+  const isObj = value !== null && typeof value === 'object';
+
+  const pathBtn = el('button', 'jt-path', '⧉ ' + t('path'));
+  pathBtn.title = t('Copy path for chaining');
+  pathBtn.tabIndex = -1;
+  pathBtn.addEventListener('click', () => {
+    const ref = chainRefFor(path);
+    navigator.clipboard.writeText(ref);
+    toast(t('Copied {ref}', { ref }));
+  });
+
+  const keyEls = [];
+  if (key !== null) {
+    keyEls.push(el('span', 'jt-key', typeof key === 'number' ? String(key) : JSON.stringify(key)), el('span', 'jt-colon', ':'));
+  }
+
+  if (isObj) {
+    const arr = Array.isArray(value);
+    const entries = arr ? value.map((v, i) => [i, v]) : Object.entries(value);
+    const toggle = el('span', 'jt-toggle', '▸');
+    const preview = el('span', 'jt-preview', (arr ? '[…] ' : '{…} ') + entries.length);
+    row.append(toggle, ...keyEls, preview, pathBtn);
+    const children = el('div', 'jt-children');
+    let built = false;
+    const setOpen = (open) => {
+      toggle.textContent = open ? '▾' : '▸';
+      if (open && !built) {
+        built = true;
+        for (const [k, v] of entries) children.append(jsonTreeNode(k, v, [...path, k], depth + 1));
+      }
+      children.style.display = open ? '' : 'none';
+    };
+    setOpen(depth < 2 && entries.length <= 200);
+    const flip = () => setOpen(toggle.textContent === '▸');
+    toggle.addEventListener('click', flip);
+    preview.addEventListener('click', flip);
+    wrap.append(row, children);
+  } else {
+    const cls =
+      value === null ? 'jt-null' : typeof value === 'string' ? 'jt-str' : typeof value === 'number' ? 'jt-num' : 'jt-bool';
+    const valEl = el('span', 'jt-val ' + cls, JSON.stringify(value));
+    valEl.title = t('Copy value');
+    valEl.addEventListener('click', () => {
+      navigator.clipboard.writeText(typeof value === 'string' ? value : JSON.stringify(value));
+      toast(t('Value copied'));
+    });
+    row.append(el('span', 'jt-toggle', ''), ...keyEls, valEl, pathBtn);
+    wrap.append(row);
+  }
+  return wrap;
+}
+
+function renderJsonTree(container, value) {
+  const root = el('div', 'json-tree');
+  root.append(jsonTreeNode(null, value, [], 0));
+  container.append(root);
 }
 
 /* ============================== response search ============================== */
@@ -1801,11 +2085,16 @@ function renderSidebar() {
   } else {
     if (state.history.length) {
       const clear = el('button', null, t('Clear History'));
-      clear.addEventListener('click', async () => {
-        if (!(await confirmDialog(t('Clear all request history?')))) return;
+      clear.addEventListener('click', () => {
+        const prev = state.history;
         state.history = [];
         persist();
         renderSidebar();
+        undoToast(t('History cleared'), () => {
+          state.history = prev;
+          persist();
+          renderSidebar();
+        });
       });
       actions.append(clear);
     }
@@ -1847,6 +2136,14 @@ function collectionEl(col, q) {
   const header = el('div', 'col-header');
   const chev = el('span', 'col-chevron', col.open || q ? '▾' : '▸');
   const name = el('span', 'col-name', col.name);
+  name.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    inlineEdit(name, col.name, (v) => {
+      col.name = v;
+      persist();
+      renderSidebar();
+    });
+  });
   const count = el('span', 'col-count', String(total));
   const acts = el('span', 'col-actions');
 
@@ -1876,13 +2173,23 @@ function collectionEl(col, q) {
 
   const del = el('button', null, '✕');
   del.title = t('Delete collection');
-  del.addEventListener('click', async (e) => {
+  del.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!(await confirmDialog(t('Delete collection "{name}" and its {n} request(s)?', { name: col.name, n: total })))) return;
-    state.collections = state.collections.filter((c) => c !== col);
-    for (const t of state.tabs) if (t.savedRef?.collectionId === col.id) t.savedRef = null;
+    const idx = state.collections.indexOf(col);
+    if (idx === -1) return;
+    const affected = state.tabs.filter((tb) => tb.savedRef?.collectionId === col.id).map((tb) => [tb, tb.savedRef]);
+    state.collections.splice(idx, 1);
+    for (const tb of state.tabs) if (tb.savedRef?.collectionId === col.id) tb.savedRef = null;
     persist();
     renderSidebar();
+    renderTabsBar();
+    undoToast(t('Deleted "{name}"', { name: col.name }), () => {
+      state.collections.splice(Math.min(idx, state.collections.length), 0, col);
+      for (const [tb, ref] of affected) tb.savedRef = ref;
+      persist();
+      renderSidebar();
+      renderTabsBar();
+    });
   });
 
   const exp = el('button', null, '⇩');
@@ -1929,6 +2236,14 @@ function folderEl(col, f, requests, forceOpen) {
   const chev = el('span', 'col-chevron', f.open || forceOpen ? '▾' : '▸');
   const icon = el('span', 'folder-icon', '📁');
   const name = el('span', 'col-name', f.name);
+  name.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    inlineEdit(name, f.name, (v) => {
+      f.name = v;
+      persist();
+      renderSidebar();
+    });
+  });
   const count = el('span', 'col-count', String(f.requests.length));
   const acts = el('span', 'col-actions');
 
@@ -1945,13 +2260,23 @@ function folderEl(col, f, requests, forceOpen) {
 
   const del = el('button', null, '✕');
   del.title = t('Delete folder');
-  del.addEventListener('click', async (e) => {
+  del.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!(await confirmDialog(t('Delete folder "{name}" and its {n} request(s)?', { name: f.name, n: f.requests.length })))) return;
-    col.folders = col.folders.filter((x) => x !== f);
-    for (const t of state.tabs) if (t.savedRef?.folderId === f.id) t.savedRef = null;
+    const idx = col.folders.indexOf(f);
+    if (idx === -1) return;
+    const affected = state.tabs.filter((tb) => tb.savedRef?.folderId === f.id).map((tb) => [tb, tb.savedRef]);
+    col.folders.splice(idx, 1);
+    for (const tb of state.tabs) if (tb.savedRef?.folderId === f.id) tb.savedRef = null;
     persist();
     renderSidebar();
+    renderTabsBar();
+    undoToast(t('Deleted "{name}"', { name: f.name }), () => {
+      col.folders.splice(Math.min(idx, col.folders.length), 0, f);
+      for (const [tb, ref] of affected) tb.savedRef = ref;
+      persist();
+      renderSidebar();
+      renderTabsBar();
+    });
   });
 
   acts.append(rename, del);
@@ -1985,6 +2310,16 @@ function reqRowEl(col, folder, saved) {
   const row = el('div', 'req-row' + (folder ? ' in-folder' : ''));
   const chip = el('span', 'method-chip m-' + saved.request.method, shortMethod(saved.request.method));
   const nm = el('span', 'req-name', saved.name);
+  nm.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    inlineEdit(nm, saved.name, (v) => {
+      saved.name = v;
+      for (const tb of state.tabs) if (tb.savedRef?.requestId === saved.id) tb.name = v;
+      persist();
+      renderSidebar();
+      renderTabsBar();
+    });
+  });
   const acts = el('span', 'col-actions');
 
   const rename = el('button', null, '✎');
@@ -2013,15 +2348,24 @@ function reqRowEl(col, folder, saved) {
 
   const del = el('button', null, '✕');
   del.title = t('Delete request');
-  del.addEventListener('click', async (e) => {
+  del.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!(await confirmDialog(t('Delete request "{name}"?', { name: saved.name })))) return;
     const list = folder ? folder.requests : col.requests;
     const idx = list.indexOf(saved);
-    if (idx > -1) list.splice(idx, 1);
+    if (idx === -1) return;
+    const affected = state.tabs.filter((tb) => tb.savedRef?.requestId === saved.id).map((tb) => [tb, tb.savedRef]);
+    list.splice(idx, 1);
     retargetTabs(saved.id, null);
     persist();
     renderSidebar();
+    renderTabsBar();
+    undoToast(t('Deleted "{name}"', { name: saved.name }), () => {
+      list.splice(Math.min(idx, list.length), 0, saved);
+      for (const [tb, ref] of affected) tb.savedRef = ref;
+      persist();
+      renderSidebar();
+      renderTabsBar();
+    });
   });
 
   acts.append(rename, dup, del);
@@ -2259,32 +2603,110 @@ function tabLabel(tab) {
   return u.replace(/^https?:\/\//i, '');
 }
 
+function inlineEdit(span, initial, onCommit) {
+  const input = document.createElement('input');
+  input.className = 'inline-rename';
+  input.value = initial;
+  input.spellcheck = false;
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
+    const v = input.value.trim();
+    input.replaceWith(span);
+    if (commit && v && v !== initial) onCommit(v);
+  };
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', (e) => e.stopPropagation());
+  input.addEventListener('dblclick', (e) => e.stopPropagation());
+}
+
+function isTabDirty(tb) {
+  const found = findSaved(tb.savedRef);
+  if (!found) return false;
+  return JSON.stringify(cleanRequest(tb.request)) !== JSON.stringify(found.saved.request);
+}
+
+let tabDragIndex = null;
+
 function renderTabsBar() {
   const list = $('#tabsList');
   list.innerHTML = '';
-  for (const tb of state.tabs) {
+  state.tabs.forEach((tb, idx) => {
     const d = el('div', 'tab' + (tb.id === state.activeTabId ? ' active' : ''));
     d.title = tb.request.url || '';
+    d.draggable = true;
     const m = el('span', 'tab-method m-' + tb.request.method, shortMethod(tb.request.method));
     const n = el('span', 'tab-name', tabLabel(tb));
+    n.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      inlineEdit(n, tb.name || tabLabel(tb), (v) => {
+        tb.name = v;
+        const found = findSaved(tb.savedRef);
+        if (found) {
+          found.saved.name = v;
+          renderSidebar();
+        }
+        renderTabsBar();
+        persist();
+      });
+    });
+    d.append(m, n);
+    if (isTabDirty(tb)) {
+      const dot = el('span', 'tab-dirty');
+      dot.title = t('Unsaved changes');
+      d.append(dot);
+    }
     const x = el('button', 'tab-close', '✕');
     x.title = t('Close tab (Ctrl+W)');
     x.addEventListener('click', (e) => {
       e.stopPropagation();
       closeTab(tb.id);
     });
-    d.append(m, n, x);
+    d.append(x);
     d.addEventListener('click', () => switchTab(tb.id));
     d.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       tabContextMenu(tb, e.clientX, e.clientY);
     });
+    d.addEventListener('dragstart', (e) => {
+      tabDragIndex = idx;
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    d.addEventListener('dragover', (e) => {
+      if (tabDragIndex === null || tabDragIndex === idx) return;
+      e.preventDefault();
+      d.classList.add('drag-over-tab');
+    });
+    d.addEventListener('dragleave', () => d.classList.remove('drag-over-tab'));
+    d.addEventListener('drop', (e) => {
+      e.preventDefault();
+      d.classList.remove('drag-over-tab');
+      if (tabDragIndex === null || tabDragIndex === idx) return;
+      const [moved] = state.tabs.splice(tabDragIndex, 1);
+      state.tabs.splice(idx, 0, moved);
+      tabDragIndex = null;
+      renderTabsBar();
+      persist();
+    });
+    d.addEventListener('dragend', () => {
+      tabDragIndex = null;
+      $$('.drag-over-tab').forEach((node) => node.classList.remove('drag-over-tab'));
+    });
     list.append(d);
-  }
+  });
 }
 
 function tabContextMenu(tab, x, y) {
-  ctxMenu(x, y, [
+  const items = [
     {
       label: t('Rename'),
       onClick: () =>
@@ -2308,6 +2730,21 @@ function tabContextMenu(tab, x, y) {
       },
     },
     { label: t('Save As…'), onClick: () => openSaveModal(tab, true) },
+  ];
+  if (isTabDirty(tab)) {
+    items.push({
+      label: t('Revert to Saved'),
+      onClick: () => {
+        const found = findSaved(tab.savedRef);
+        if (!found) return;
+        tab.request = normalizeRequest(structuredClone(found.saved.request));
+        if (tab === activeTab()) loadEditor();
+        renderTabsBar();
+        persist();
+      },
+    });
+  }
+  items.push(
     '-',
     { label: t('Close'), onClick: () => closeTab(tab.id) },
     {
@@ -2321,8 +2758,9 @@ function tabContextMenu(tab, x, y) {
         loadEditor();
         persist();
       },
-    },
-  ]);
+    }
+  );
+  ctxMenu(x, y, items);
 }
 
 function switchTab(id) {
@@ -2621,14 +3059,22 @@ function openEnvManager() {
 
     if (!isGlobals) {
       const del = el('button', null, t('Delete'));
-      del.addEventListener('click', async () => {
-        if (!(await confirmDialog(t('Delete environment "{name}"?', { name: env.name })))) return;
-        state.environments = state.environments.filter((e) => e !== env);
-        if (state.activeEnvId === env.id) state.activeEnvId = null;
+      del.addEventListener('click', () => {
+        const idx = state.environments.indexOf(env);
+        if (idx === -1) return;
+        const wasActive = state.activeEnvId === env.id;
+        state.environments.splice(idx, 1);
+        if (wasActive) state.activeEnvId = null;
         selId = '__globals';
         persist();
         renderEnvSelect();
         refresh();
+        undoToast(t('Deleted "{name}"', { name: env.name }), () => {
+          state.environments.splice(Math.min(idx, state.environments.length), 0, env);
+          if (wasActive) state.activeEnvId = env.id;
+          persist();
+          renderEnvSelect();
+        });
       });
       controls.append(del);
     }
@@ -2824,6 +3270,42 @@ function openPalette() {
   input.focus();
 }
 
+/* ============================== cheat sheet & zoom ============================== */
+
+function openCheatSheet() {
+  const rows = [
+    ['Ctrl+Enter', t('Send Request')],
+    ['Ctrl+S', t('Save Request')],
+    ['Ctrl+Shift+S', t('Save Request As')],
+    ['Ctrl+T', t('New Request Tab')],
+    ['Ctrl+W', t('Close tab (Ctrl+W)')],
+    ['Ctrl+K', t('Command palette')],
+    ['Ctrl+F', t('Find in response body…')],
+    ['Ctrl+Shift+N', t('New Window')],
+    ['Ctrl+= / Ctrl+-', t('Zoom in / out')],
+    ['Ctrl+0', t('Reset zoom')],
+    ['Ctrl+/', t('This cheat sheet')],
+    ['F12', t('Toggle DevTools')],
+  ];
+  const grid = el('div', 'shortcut-grid');
+  for (const [keys, label] of rows) {
+    grid.append(el('kbd', null, keys), el('span', null, label));
+  }
+  modal(t('Keyboard Shortcuts'), grid, [{ label: t('Close'), primary: true }]);
+}
+
+function applyZoom() {
+  document.body.style.zoom = String(state.settings.zoom || 1);
+}
+
+function changeZoom(delta) {
+  const z = Math.round(Math.min(1.5, Math.max(0.7, (state.settings.zoom || 1) + delta)) * 10) / 10;
+  state.settings.zoom = z;
+  applyZoom();
+  persist();
+  toast(t('Zoom: {n}%', { n: Math.round(z * 100) }));
+}
+
 /* ============================== keyboard shortcuts ============================== */
 
 function initShortcuts() {
@@ -2852,6 +3334,20 @@ function initShortcuts() {
     } else if (k === 'n' && e.shiftKey) {
       e.preventDefault();
       window.lostman.newWindow();
+    } else if (k === '/' || k === '?') {
+      e.preventDefault();
+      openCheatSheet();
+    } else if (k === '=' || k === '+') {
+      e.preventDefault();
+      changeZoom(0.1);
+    } else if (k === '-') {
+      e.preventDefault();
+      changeZoom(-0.1);
+    } else if (k === '0') {
+      e.preventDefault();
+      state.settings.zoom = 1;
+      applyZoom();
+      persist();
     }
   });
 }
@@ -3005,11 +3501,14 @@ function openCookieModal() {
     {
       label: t('Clear All'),
       onClick: () => {
-        confirmDialog(t('Delete all stored cookies?')).then((ok) => {
-          if (!ok) return;
-          state.cookies = [];
+        const prev = state.cookies;
+        state.cookies = [];
+        persist();
+        refresh();
+        undoToast(t('Cookies cleared'), () => {
+          state.cookies = prev;
           persist();
-          refresh();
+          if (listBox.isConnected) refresh();
         });
         return false;
       },
@@ -3287,9 +3786,10 @@ async function oauthFetchToken() {
 /* ============================== {{variable}} autocomplete ============================== */
 
 let acInput = null;
-let acStart = 0;
 let acIndex = 0;
 let acItems = [];
+let acSuppress = null;
+const acProviders = new WeakMap();
 
 function hideAC() {
   $('#acRoot').innerHTML = '';
@@ -3297,47 +3797,125 @@ function hideAC() {
   acItems = [];
 }
 
-function acCandidates(prefix) {
-  const vars = Object.keys(varMap(null));
-  const chains = [...chainStore.keys()].map((n) => `res.${n}.body`);
-  const all = [...vars, ...chains];
-  const p = prefix.toLowerCase();
-  return all.filter((n) => n.toLowerCase().startsWith(p) && n !== prefix).slice(0, 8);
-}
-
-function showAC(input) {
+// Providers return { items: [{ label, hint, apply(input) }] } or null.
+function varProvider(input) {
   const pos = input.selectionStart ?? input.value.length;
   const before = input.value.slice(0, pos);
   const m = before.match(/\{\{\s*([\w.-]*)$/);
-  if (!m) {
-    hideAC();
+  if (!m) return null;
+  const start = pos - m[1].length;
+  const vm = varMap(null);
+  const names = [...Object.keys(vm), ...[...chainStore.keys()].map((n) => `res.${n}.body`)];
+  const prefix = m[1].toLowerCase();
+  const items = names
+    .filter((n) => n.toLowerCase().startsWith(prefix) && n !== m[1])
+    .slice(0, 8)
+    .map((name) => ({
+      label: name,
+      hint: name in vm && vm[name] ? String(vm[name]).slice(0, 24) : '',
+      apply(inp) {
+        const after = inp.value.slice(pos);
+        const closing = after.startsWith('}}') ? '' : '}}';
+        inp.value = inp.value.slice(0, start) + name + closing + after;
+        const cursor = start + name.length + closing.length;
+        inp.setSelectionRange(cursor, cursor);
+      },
+    }));
+  return items.length ? { items } : null;
+}
+
+function urlHistoryProvider(input) {
+  const v = input.value.trim();
+  if (v.length < 3 || v.includes('{{')) return null;
+  const lower = v.toLowerCase();
+  const seen = new Set();
+  const items = [];
+  for (const h of state.history) {
+    const u = (h.request.url || '').trim();
+    if (!u || u === v || seen.has(u) || !u.toLowerCase().includes(lower)) continue;
+    seen.add(u);
+    items.push({
+      label: u,
+      hint: h.request.method,
+      apply(inp) {
+        inp.value = u;
+        inp.setSelectionRange(u.length, u.length);
+      },
+    });
+    if (items.length >= 8) break;
+  }
+  return items.length ? { items } : null;
+}
+
+const COMMON_HEADERS = [
+  'Accept', 'Accept-Encoding', 'Accept-Language', 'Authorization', 'Cache-Control', 'Content-Type',
+  'Cookie', 'If-Modified-Since', 'If-None-Match', 'Origin', 'Referer', 'User-Agent',
+  'X-Api-Key', 'X-Correlation-Id', 'X-Requested-With',
+];
+const COMMON_CONTENT_TYPES = [
+  'application/json', 'application/xml', 'application/x-www-form-urlencoded',
+  'multipart/form-data', 'text/plain', 'text/html', 'application/octet-stream',
+];
+
+function fillWholeValue(text) {
+  return (inp) => {
+    inp.value = text;
+    inp.setSelectionRange(text.length, text.length);
+  };
+}
+
+function headerNameProvider(input) {
+  const v = input.value.trim();
+  if (!v || v.includes('{{')) return null;
+  const lower = v.toLowerCase();
+  const items = COMMON_HEADERS.filter((h) => h.toLowerCase().startsWith(lower) && h.toLowerCase() !== lower)
+    .slice(0, 8)
+    .map((h) => ({ label: h, hint: '', apply: fillWholeValue(h) }));
+  return items.length ? { items } : null;
+}
+
+function contentTypeProviderFor(row) {
+  return (input) => {
+    if (String(row.key).toLowerCase() !== 'content-type') return null;
+    const v = input.value.trim().toLowerCase();
+    const items = COMMON_CONTENT_TYPES.filter((c) => c.startsWith(v) && c !== v)
+      .slice(0, 8)
+      .map((c) => ({ label: c, hint: '', apply: fillWholeValue(c) }));
+    return items.length ? { items } : null;
+  };
+}
+
+function showAC(input) {
+  if (acSuppress === input) {
+    acSuppress = null;
     return;
   }
-  const items = acCandidates(m[1]);
-  if (!items.length) {
+  const provs = acProviders.get(input) || [];
+  let result = null;
+  for (const p of provs) {
+    result = p(input);
+    if (result && result.items.length) break;
+    result = null;
+  }
+  if (!result) {
     hideAC();
     return;
   }
   acInput = input;
-  acStart = pos - m[1].length;
-  acItems = items;
+  acItems = result.items;
   acIndex = 0;
   const root = $('#acRoot');
   root.innerHTML = '';
   const menu = el('div', 'ac-menu');
-  const vm = varMap(null);
-  items.forEach((name, i) => {
-    const item = el('div', 'ac-item' + (i === acIndex ? ' sel' : ''));
-    item.textContent = name;
-    if (name in vm && vm[name]) {
-      const v = el('span', 'ac-val', String(vm[name]).slice(0, 24));
-      item.append(v);
-    }
-    item.addEventListener('mousedown', (e) => {
+  acItems.forEach((item, i) => {
+    const node = el('div', 'ac-item' + (i === acIndex ? ' sel' : ''));
+    node.textContent = item.label;
+    if (item.hint) node.append(el('span', 'ac-val', item.hint));
+    node.addEventListener('mousedown', (e) => {
       e.preventDefault();
-      acPick(name);
+      acPick(item);
     });
-    menu.append(item);
+    menu.append(node);
   });
   root.append(menu);
   const rect = input.getBoundingClientRect();
@@ -3345,22 +3923,19 @@ function showAC(input) {
   menu.style.top = Math.min(rect.bottom + 3, window.innerHeight - menu.offsetHeight - 10) + 'px';
 }
 
-function acPick(name) {
+function acPick(item) {
   if (!acInput) return;
   const input = acInput;
-  const pos = input.selectionStart ?? input.value.length;
-  const after = input.value.slice(pos);
-  const closing = after.startsWith('}}') ? '' : '}}';
-  input.value = input.value.slice(0, acStart) + name + closing + after;
-  const cursor = acStart + name.length + closing.length;
-  input.setSelectionRange(cursor, cursor);
   hideAC();
+  item.apply(input);
+  acSuppress = input;
   input.dispatchEvent(new Event('input', { bubbles: false }));
   input.focus();
 }
 
-function attachAC(input) {
+function attachAC(input, providers) {
   if (!input) return;
+  acProviders.set(input, providers || [varProvider]);
   input.addEventListener('input', () => showAC(input));
   input.addEventListener('blur', () => setTimeout(hideAC, 120));
   input.addEventListener('keydown', (e) => {
@@ -4564,6 +5139,56 @@ function restoreBackup(obj) {
   persist();
 }
 
+// Seeded on the very first launch so new users can learn by clicking working examples.
+function welcomeCollection() {
+  const req = (over) => normalizeRequest({ ...blankRequest(), ...over });
+  return {
+    id: uid(),
+    name: 'Learn Lostman',
+    open: true,
+    folders: [],
+    requests: [
+      { id: uid(), name: 'Simple GET with params', request: req({ method: 'GET', url: 'https://httpbin.org/get?hello=world' }) },
+      {
+        id: uid(),
+        name: 'POST JSON',
+        request: req({
+          method: 'POST',
+          url: 'https://httpbin.org/post',
+          bodyMode: 'raw',
+          rawType: 'json',
+          rawBody: '{\n  "name": "Lostman",\n  "awesome": true\n}',
+        }),
+      },
+      {
+        id: uid(),
+        name: 'Bearer auth',
+        request: req({
+          method: 'GET',
+          url: 'https://httpbin.org/bearer',
+          auth: { ...blankRequest().auth, type: 'bearer', token: 'my-secret-token' },
+        }),
+      },
+      {
+        id: uid(),
+        name: 'Test script',
+        request: req({
+          method: 'GET',
+          url: 'https://httpbin.org/json',
+          testScript:
+            'pm.test("status is 200", () => expect(pm.response.code).toBe(200));\npm.test("has a slideshow", () => expect(pm.response.json()).toHaveProperty("slideshow"));',
+        }),
+      },
+      { id: uid(), name: 'GetUuid', request: req({ method: 'GET', url: 'https://httpbin.org/uuid' }) },
+      {
+        id: uid(),
+        name: 'Chain the UUID',
+        request: req({ method: 'GET', url: 'https://httpbin.org/anything?uuid={{res.GetUuid.body.uuid}}' }),
+      },
+    ],
+  };
+}
+
 async function init() {
   let stored = null;
   try {
@@ -4573,12 +5198,14 @@ async function init() {
   }
 
   if (stored) hydrateState(stored);
+  else state.collections.push(welcomeCollection());
 
   if (!state.tabs.length) state.tabs.push(makeTab());
   if (!state.tabs.some((t) => t.id === state.activeTabId)) state.activeTabId = state.tabs[0].id;
 
   setLocale(state.settings.language || 'en');
   applyTheme();
+  applyZoom();
   initEditor();
   initSidebar();
   initResponseToolbar();

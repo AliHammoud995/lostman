@@ -292,6 +292,17 @@ const pmDoc = {
   check('pre-script mutates payload', pre.ok && payload.headers[0].value === '2' && payload.method === 'POST');
 }
 
+/* ---- bulk edit ---- */
+{
+  const rows = appCtx.bulkToRows('Content-Type: application/json\n// X-Debug: 1\n\nAccept: */*\nBareKey\n');
+  check('bulk: parse count', rows.length === 4);
+  check('bulk: values', rows[0].key === 'Content-Type' && rows[0].value === 'application/json' && rows[0].enabled === true);
+  check('bulk: disabled via //', rows[1].key === 'X-Debug' && rows[1].enabled === false);
+  check('bulk: bare key', rows[3].key === 'BareKey' && rows[3].value === '');
+  const round = appCtx.bulkToRows(appCtx.rowsToBulk(rows));
+  check('bulk: round-trip', JSON.stringify(round.map((r) => [r.key, r.value, r.enabled])) === JSON.stringify(rows.map((r) => [r.key, r.value, r.enabled])));
+}
+
 /* ---- fuzzy palette ---- */
 {
   check('fuzzy: match', appCtx.fuzzyScore('guser', 'GET Users / Get user by id') >= 0);

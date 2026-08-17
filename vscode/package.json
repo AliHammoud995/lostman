@@ -2,7 +2,7 @@
   "name": "lostman-api-client",
   "displayName": "Lostman — API Client",
   "description": "Free offline Postman alternative — REST, GraphQL, WebSocket & SSE client inside VS Code. No login, no cloud.",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "publisher": "AkbarHammoud",
   "license": "MIT",
   "icon": "icon.png",

@@ -949,6 +949,151 @@ table.hdr-table td:first-child { color: var(--muted); width: 240px; }
 }
 .toast.show { opacity: 1; transform: translateY(0); }
 
+/* ---------- JSON tree view ---------- */
+
+.json-tree {
+  padding: 10px 14px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.jt-row { display: flex; align-items: baseline; gap: 2px; border-radius: 3px; }
+.jt-row:hover { background: var(--bg1); }
+.jt-row:hover .jt-path { visibility: visible; }
+.jt-toggle {
+  width: 14px;
+  flex-shrink: 0;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  font-size: 10px;
+}
+.jt-key { color: var(--json-key); }
+.jt-colon { color: var(--muted); margin-right: 5px; }
+.jt-val { cursor: pointer; border-radius: 3px; padding: 0 2px; word-break: break-all; }
+.jt-val:hover { background: var(--bg3); }
+.jt-str { color: var(--json-str); }
+.jt-num { color: var(--json-num); }
+.jt-bool { color: var(--json-bool); }
+.jt-null { color: var(--json-null); }
+.jt-preview { color: var(--faint); cursor: pointer; }
+.jt-children { padding-left: 18px; }
+.jt-path {
+  visibility: hidden;
+  background: transparent;
+  border: none;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+.jt-path:hover { color: var(--accent); background: transparent; }
+
+/* ---------- JSON body editor overlay ---------- */
+
+.code-editor { position: relative; width: 100%; }
+.code-editor pre,
+.code-editor textarea {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  tab-size: 2;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  margin: 0;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  min-height: 130px;
+  box-sizing: border-box;
+}
+.code-editor pre {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--text);
+  background: var(--bg2);
+  border-radius: 4px;
+}
+.code-editor textarea {
+  position: relative;
+  width: 100%;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  resize: vertical;
+  display: block;
+}
+.code-editor textarea::selection { background: rgba(122, 162, 247, 0.3); color: transparent; }
+.code-editor textarea:focus { border-color: var(--accent); }
+.json-status { font-size: 11.5px; margin-top: 4px; font-family: var(--mono); }
+.json-status.ok { color: var(--ok); }
+.json-status.err { color: var(--err); }
+
+/* ---------- bulk edit ---------- */
+
+.panel-toolbar { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.panel-toolbar .panel-hint { flex: 1; }
+.bulk-area {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* ---------- dirty tab dot ---------- */
+
+.tab-dirty {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.tab.drag-over-tab { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* ---------- undo toast ---------- */
+
+.toast { pointer-events: auto; display: flex; align-items: center; gap: 12px; }
+.toast-undo {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-weight: 600;
+  padding: 0;
+  cursor: pointer;
+}
+.toast-undo:hover { text-decoration: underline; background: transparent; }
+
+/* ---------- cheat sheet ---------- */
+
+.shortcut-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; min-width: 360px; }
+.shortcut-grid kbd {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+  justify-self: start;
+}
+.shortcut-grid span { color: var(--muted); align-self: center; }
+
+/* inline rename */
+.inline-rename {
+  font: inherit;
+  background: var(--bg2);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 4px;
+  min-width: 80px;
+}
+
 /* ---------- RTL (Arabic) ---------- */
 
 /* Technical fields stay left-to-right even in RTL locales. */

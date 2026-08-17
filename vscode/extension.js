@@ -20,8 +20,26 @@ function loadStore(context) {
   }
 }
 
+// Once per day, snapshot the data file into backups/ and keep the last 7.
+function rotateBackups(file) {
+  try {
+    if (!fs.existsSync(file)) return;
+    const dir = path.join(path.dirname(file), 'backups');
+    const stamp = new Date().toISOString().slice(0, 10);
+    const target = path.join(dir, `lostman-${stamp}.json`);
+    if (fs.existsSync(target)) return;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.copyFileSync(file, target);
+    const files = fs.readdirSync(dir).filter((f) => /^lostman-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
+    while (files.length > 7) fs.unlinkSync(path.join(dir, files.shift()));
+  } catch {
+    /* best effort */
+  }
+}
+
 function saveStore(context, data) {
   const file = storeFile(context);
+  rotateBackups(file);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(data));
 }

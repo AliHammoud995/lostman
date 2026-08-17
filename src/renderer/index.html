@@ -71,13 +71,21 @@
 
         <div id="panels">
           <div id="panel-params" class="panel active">
-            <div class="panel-hint" data-i18n>Synced with the URL — edit either side and the other updates. Disabled rows are kept out of the URL.</div>
+            <div class="panel-toolbar">
+              <div class="panel-hint" data-i18n>Synced with the URL — edit either side and the other updates. Disabled rows are kept out of the URL.</div>
+              <button id="btnBulkParams" class="ghost" data-i18n>Bulk Edit</button>
+            </div>
             <div id="kvParams" class="kv"></div>
+            <textarea id="bulkParams" class="bulk-area hidden" spellcheck="false"></textarea>
           </div>
 
           <div id="panel-headers" class="panel">
-            <div class="panel-hint" data-i18n>Headers sent with the request. Content-Type is added automatically for raw JSON bodies unless you set one.</div>
+            <div class="panel-toolbar">
+              <div class="panel-hint" data-i18n>Headers sent with the request. Content-Type is added automatically for raw JSON bodies unless you set one.</div>
+              <button id="btnBulkHeaders" class="ghost" data-i18n>Bulk Edit</button>
+            </div>
             <div id="kvHeaders" class="kv"></div>
+            <textarea id="bulkHeaders" class="bulk-area hidden" spellcheck="false"></textarea>
           </div>
 
           <div id="panel-body" class="panel">
@@ -94,8 +102,14 @@
               <button id="btnBeautify" class="ghost hidden" data-i18n data-i18n-title title="Format JSON">Beautify</button>
             </div>
             <div id="bodyNone" class="body-area body-none" data-i18n>This request has no body</div>
-            <textarea id="rawBody" class="body-area hidden" spellcheck="false"
-                      placeholder='{&#10;  "key": "value"&#10;}'></textarea>
+            <div id="rawBodyWrap" class="body-area hidden">
+              <div class="code-editor">
+                <pre id="rawBodyHl" aria-hidden="true"></pre>
+                <textarea id="rawBody" spellcheck="false"
+                          placeholder='{&#10;  "key": "value"&#10;}'></textarea>
+              </div>
+              <div id="jsonStatus" class="json-status"></div>
+            </div>
             <div id="kvForm" class="kv body-area hidden"></div>
             <div id="gqlArea" class="hidden">
               <div class="panel-hint" data-i18n>Query</div>
